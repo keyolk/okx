@@ -1,10 +1,11 @@
 // Package tui implements okx's interactive assignment browser.
 //
-// Layout is a drill-down stack (k9s/a9s shape), not a persistent multi-panel:
-// the workflow is "pick an app, then work inside it", and a 3-pane layout
-// would waste half the width on a 7-row app list.
+// The top level has three numbered resource views. Each remains a drill-down
+// stack rather than a persistent multi-panel, so narrow terminals stay useful.
 //
-//	screenApps  → screenAssignments → overlay pickers / confirm modal
+//	1 Apps   → assignments → user apps
+//	2 Groups → granted apps
+//	3 Users  → user apps
 package tui
 
 import (
@@ -25,8 +26,11 @@ type screen int
 
 const (
 	screenApps screen = iota
+	screenGroups
+	screenUsers
 	screenAssignments
-	screenUserApps // reverse view: which apps does this user have
+	screenGroupApps
+	screenUserApps
 	screenHelp
 )
 
@@ -60,11 +64,21 @@ type Model struct {
 	screen  screen
 	overlay overlay
 
-	// app list
-	apps     []okta.App
-	appCur   int
-	appTop   int
-	appFiltr string
+	// numbered top-level resource views
+	apps           []okta.App
+	appCur         int
+	appTop         int
+	appFiltr       string
+	groups         []okta.Group
+	groupCur       int
+	groupTop       int
+	groupFiltr     string
+	users          []okta.User
+	userCur        int
+	userTop        int
+	userFiltr      string
+	groupAppCounts map[string]int
+	userAppCounts  map[string]int
 
 	// current app's assignments
 	curApp      okta.App
@@ -76,11 +90,18 @@ type Model struct {
 	showGroups bool
 	appGroups  []groupRow
 
-	// reverse view
-	revUser   okta.User
-	revAccess []cache.UserAccess
-	revCur    int
-	revTop    int
+	// group and user detail views
+	curGroup       okta.Group
+	groupApps      []okta.App
+	groupAppCur    int
+	groupAppTop    int
+	revUser        okta.User
+	revAccess      []cache.UserAccess
+	revCur         int
+	revTop         int
+	detailBack     screen
+	assignmentBack screen
+	helpBack       screen
 
 	// picker overlay
 	pick pickerState
@@ -119,14 +140,41 @@ func New(ctx context.Context, c *okxapp.Context) *Model {
 		st:  newStyles(),
 		gl:  detectGlyphs(),
 	}
-	m.reloadApps()
+	m.reloadResources()
 	return m
 }
 
-func (m *Model) reloadApps() {
+func (m *Model) reloadResources() {
 	m.apps = append(m.apps[:0], m.app.Index.Apps...)
 	sort.Slice(m.apps, func(i, j int) bool { return m.apps[i].Label < m.apps[j].Label })
-	m.clampApps()
+	m.groups = append(m.groups[:0], m.app.Index.Groups...)
+	sort.Slice(m.groups, func(i, j int) bool {
+		return m.groups[i].Profile.Name < m.groups[j].Profile.Name
+	})
+	m.users = append(m.users[:0], m.app.Index.Users...)
+	sort.Slice(m.users, func(i, j int) bool {
+		return m.users[i].Profile.Login < m.users[j].Profile.Login
+	})
+
+	m.groupAppCounts = make(map[string]int, len(m.groups))
+	m.userAppCounts = make(map[string]int, len(m.users))
+	for appID, groups := range m.app.Index.AppGroups {
+		if _, ok := m.app.Index.App(appID); !ok {
+			continue
+		}
+		for _, group := range groups {
+			m.groupAppCounts[group.ID]++
+		}
+	}
+	for appID, users := range m.app.Index.AppUsers {
+		if _, ok := m.app.Index.App(appID); !ok {
+			continue
+		}
+		for _, user := range users {
+			m.userAppCounts[user.ID]++
+		}
+	}
+	m.clampTopLevel()
 }
 
 func (m *Model) loadAssignments() {
@@ -146,21 +194,33 @@ func (m *Model) loadAssignments() {
 	m.asgCur, m.asgTop = 0, 0
 }
 
-// Init implements tea.Model.
-func (m *Model) Init() tea.Cmd { return nil }
+// Init implements tea.Model. A stale snapshot remains immediately usable while
+// its replacement is fetched by Bubble Tea rather than blocking startup.
+func (m *Model) Init() tea.Cmd {
+	if !m.app.NeedsRefresh {
+		return nil
+	}
+	m.busy = "refreshing"
+	return m.refreshCmd()
+}
 
 // ---- messages -------------------------------------------------------------
 
-type refreshDoneMsg struct{ err error }
+type refreshDoneMsg struct {
+	index *cache.Index
+	err   error
+}
 type applyDoneMsg struct {
 	applied int
 	failed  int
+	index   *cache.Index
 	err     error
 }
 
 func (m *Model) refreshCmd() tea.Cmd {
 	return func() tea.Msg {
-		return refreshDoneMsg{err: m.app.Refetch(m.ctx, true)}
+		index, err := m.app.FetchIndex(m.ctx, true)
+		return refreshDoneMsg{index: index, err: err}
 	}
 }
 
@@ -195,13 +255,26 @@ func (m *Model) applyCmd(changes []plannedChange, appID string) tea.Cmd {
 			}
 			applied++
 		}
+
+		var index *cache.Index
 		if applied > 0 {
-			// The snapshot is wrong the moment a write lands.
-			if err := m.app.Refetch(m.ctx, true); err != nil && firstErr == nil {
-				firstErr = err
+			// Never leave a now-wrong snapshot looking fresh if the follow-up
+			// fetch fails. A successful save supersedes an earlier delete error.
+			invalidateErr := m.app.Invalidate()
+			fresh, fetchErr := m.app.FetchIndex(m.ctx, true)
+			if fetchErr != nil {
+				if firstErr == nil {
+					if invalidateErr != nil {
+						firstErr = fmt.Errorf("invalidate cache: %v; refetch snapshot: %w", invalidateErr, fetchErr)
+					} else {
+						firstErr = fetchErr
+					}
+				}
+			} else {
+				index = fresh
 			}
 		}
-		return applyDoneMsg{applied: applied, failed: failed, err: firstErr}
+		return applyDoneMsg{applied: applied, failed: failed, index: index, err: firstErr}
 	}
 }
 
@@ -213,7 +286,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.small = msg.Width < minWidth || msg.Height < minHeight
-		m.clampApps()
+		m.clampTopLevel()
 		return m, nil
 
 	case refreshDoneMsg:
@@ -222,20 +295,37 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setError(msg.err)
 			return m, nil
 		}
-		m.reloadApps()
-		if m.screen == screenAssignments {
+		m.app.Index = msg.index
+		m.app.NeedsRefresh = false
+		m.reloadResources()
+		switch m.screen {
+		case screenAssignments:
 			if a, ok := m.app.Index.App(m.curApp.ID); ok {
 				m.curApp = a
 			}
+			if m.assignmentBack == screenGroupApps {
+				m.loadGroupApps()
+			}
 			m.loadAssignments()
+		case screenGroupApps:
+			m.loadGroupApps()
+		case screenUserApps:
+			m.revAccess = m.app.Index.UserApps(m.revUser.ID)
 		}
 		m.setStatus("refreshed", false)
 		return m, nil
 
 	case applyDoneMsg:
 		m.busy = ""
-		m.reloadApps()
+		m.app.NeedsRefresh = msg.applied > 0 && msg.index == nil
+		if msg.index != nil {
+			m.app.Index = msg.index
+		}
+		m.reloadResources()
 		if m.screen == screenAssignments {
+			if m.assignmentBack == screenGroupApps {
+				m.loadGroupApps()
+			}
 			m.loadAssignments()
 		}
 		switch {
@@ -244,6 +334,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.failed > 0:
 			m.setStatus(fmt.Sprintf("%s applied %d, %d failed: %v",
 				m.gl.fail, msg.applied, msg.failed, msg.err), true)
+		case msg.err != nil:
+			m.setStatus(fmt.Sprintf("%s applied %d; snapshot refresh failed: %v",
+				m.gl.fail, msg.applied, msg.err), true)
 		default:
 			m.setStatus(fmt.Sprintf("%s applied %d change(s)", m.gl.ok, msg.applied), false)
 		}
@@ -275,16 +368,26 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
+	case "1":
+		m.switchTopLevel(screenApps)
+		return m, nil
+	case "2":
+		m.switchTopLevel(screenGroups)
+		return m, nil
+	case "3":
+		m.switchTopLevel(screenUsers)
+		return m, nil
 	case "q", "ctrl+c":
-		if m.screen != screenApps {
+		if !isTopLevel(m.screen) {
 			m.back()
 			return m, nil
 		}
 		return m, tea.Quit
 	case "?":
 		if m.screen == screenHelp {
-			m.screen = screenApps
+			m.screen = m.helpBack
 		} else {
+			m.helpBack = m.screen
 			m.screen = screenHelp
 		}
 		return m, nil
@@ -296,19 +399,27 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, m.refreshCmd()
 	case "/":
-		m.filtering = true
+		if _, ok := m.currentFilter(); ok {
+			m.filtering = true
+		}
 		return m, nil
 	}
 
 	switch m.screen {
 	case screenApps:
 		return m.handleAppsKey(key)
+	case screenGroups:
+		return m.handleGroupsKey(key)
+	case screenUsers:
+		return m.handleUsersKey(key)
 	case screenAssignments:
 		return m.handleAssignmentsKey(key)
+	case screenGroupApps:
+		return m.handleGroupAppsKey(key)
 	case screenUserApps:
 		return m.handleUserAppsKey(key)
 	case screenHelp:
-		m.screen = screenApps
+		m.screen = m.helpBack
 		return m, nil
 	}
 	return m, nil
@@ -317,12 +428,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) back() {
 	switch m.screen {
 	case screenUserApps:
-		m.screen = screenAssignments
+		m.screen = m.detailBack
+	case screenGroupApps:
+		m.screen = screenGroups
 	case screenAssignments:
-		m.screen = screenApps
+		m.screen = m.assignmentBack
 		m.asgFiltr = ""
 	case screenHelp:
-		m.screen = screenApps
+		m.screen = m.helpBack
 	}
 }
 
@@ -346,6 +459,7 @@ func (m *Model) handleAppsKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.curApp = rows[m.clampIdx(m.appCur, len(rows))]
+		m.assignmentBack = screenApps
 		m.screen = screenAssignments
 		m.showGroups = false
 		m.loadAssignments()
@@ -433,10 +547,7 @@ func (m *Model) drillIntoSelected() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	sel := rows[m.clampIdx(m.asgCur, len(rows))]
-	m.revUser = sel.User
-	m.revAccess = m.app.Index.UserApps(sel.User.ID)
-	m.revCur, m.revTop = 0, 0
-	m.screen = screenUserApps
+	m.openUserApps(sel.User, screenAssignments)
 	return m, nil
 }
 
@@ -475,9 +586,10 @@ func (m *Model) planRemoveSelected() (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	target := &m.appFiltr
-	if m.screen == screenAssignments {
-		target = &m.asgFiltr
+	target, ok := m.currentFilter()
+	if !ok {
+		m.filtering = false
+		return m, nil
 	}
 	switch msg.String() {
 	case "enter", "esc":
@@ -498,8 +610,7 @@ func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			*target += " "
 		}
 	}
-	m.appCur, m.appTop = 0, 0
-	m.asgCur, m.asgTop = 0, 0
+	m.resetCurrentCursor()
 	return m, nil
 }
 
@@ -524,9 +635,13 @@ func (m *Model) listHeight() int {
 	return h
 }
 
-func (m *Model) clampApps() {
+func (m *Model) clampTopLevel() {
 	m.appCur = m.clampIdx(m.appCur, len(m.filteredApps()))
 	m.appTop = scrollTo(m.appTop, m.appCur, m.listHeight())
+	m.groupCur = m.clampIdx(m.groupCur, len(m.filteredTopGroups()))
+	m.groupTop = scrollTo(m.groupTop, m.groupCur, m.listHeight())
+	m.userCur = m.clampIdx(m.userCur, len(m.filteredTopUsers()))
+	m.userTop = scrollTo(m.userTop, m.userCur, m.listHeight())
 }
 
 func (m *Model) clampIdx(i, n int) int {

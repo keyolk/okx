@@ -39,6 +39,17 @@ type Snapshot struct {
 	GroupMembers map[string][]string `json:"groupMembers"`
 }
 
+// Empty returns an initialized snapshot suitable for rendering while the first
+// fetch runs asynchronously.
+func Empty(orgURL string) *Snapshot {
+	return &Snapshot{
+		OrgURL:       orgURL,
+		AppUsers:     map[string][]okta.AppUser{},
+		AppGroups:    map[string][]okta.AppGroup{},
+		GroupMembers: map[string][]string{},
+	}
+}
+
 // Age reports how stale the snapshot is.
 func (s *Snapshot) Age() time.Duration { return time.Since(s.FetchedAt) }
 

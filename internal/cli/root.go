@@ -61,6 +61,7 @@ Running okx with no subcommand opens the interactive TUI.`,
 
 	root.AddCommand(
 		newAppsCmd(),
+		newSearchCmd(),
 		newShowCmd(),
 		newWhoamiCmd(),
 		newUserCmd(),
@@ -89,9 +90,10 @@ func open(ctx context.Context) (*okxapp.Context, error) {
 
 func newRefreshCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "refresh",
-		Short: "Refetch the org snapshot into the local cache",
-		Args:  cobra.NoArgs,
+		Use:     "refresh",
+		Aliases: []string{"refetch"},
+		Short:   "Refetch the org snapshot into the local cache",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			flagRefresh = true
 			c, err := open(cmd.Context())

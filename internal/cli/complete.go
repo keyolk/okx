@@ -15,7 +15,7 @@ import (
 func completionContext(cmd *cobra.Command) *okxapp.Context {
 	c, err := okxapp.Open(cmd.Context(), okxapp.Options{
 		ConfigPath: flagConfig,
-		TTL:        365 * 24 * 60 * 60 * 1e9, // accept any cache age
+		CacheOnly:  true,
 		Quiet:      true,
 	})
 	if err != nil {

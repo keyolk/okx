@@ -282,14 +282,43 @@ func (m *Model) filteredApps() []okta.App {
 	if m.appFiltr == "" {
 		return m.apps
 	}
-	labels := make([]string, len(m.apps))
-	for i, a := range m.apps {
-		labels[i] = a.Label
+	out := make([]okta.App, 0, len(m.apps))
+	for _, a := range m.apps {
+		if m.app.AppMatches(a.ID, m.appFiltr) {
+			out = append(out, a)
+		}
 	}
-	matches := fuzzy.Filter(labels, m.appFiltr)
-	out := make([]okta.App, 0, len(matches))
-	for _, mt := range matches {
-		out = append(out, m.apps[mt.Index])
+	return out
+}
+
+func (m *Model) filteredTopGroups() []okta.Group {
+	if m.groupFiltr == "" {
+		return m.groups
+	}
+	hay := make([]string, len(m.groups))
+	for i, g := range m.groups {
+		hay[i] = g.Profile.Name + " " + g.Profile.Description + " " + g.ID
+	}
+	matches := fuzzy.Filter(hay, m.groupFiltr)
+	out := make([]okta.Group, 0, len(matches))
+	for _, match := range matches {
+		out = append(out, m.groups[match.Index])
+	}
+	return out
+}
+
+func (m *Model) filteredTopUsers() []okta.User {
+	if m.userFiltr == "" {
+		return m.users
+	}
+	hay := make([]string, len(m.users))
+	for i, u := range m.users {
+		hay[i] = u.Profile.Login + " " + u.Profile.Email + " " + u.Name() + " " + u.ID
+	}
+	matches := fuzzy.Filter(hay, m.userFiltr)
+	out := make([]okta.User, 0, len(matches))
+	for _, match := range matches {
+		out = append(out, m.users[match.Index])
 	}
 	return out
 }
