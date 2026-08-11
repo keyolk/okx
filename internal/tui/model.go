@@ -351,11 +351,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
-	// A running mutation owns the screen: swallow everything but quit so a
-	// stray keypress can't queue a second write against stale state.
+	// A running mutation owns the screen so a stray keypress cannot queue a
+	// second write against stale state. Refresh is read-only: keep the numbered
+	// resource views available while the first snapshot is loading.
 	if m.busy != "" {
 		if key == "q" || key == "ctrl+c" {
 			return m, tea.Quit
+		}
+		if m.busy == "refreshing" {
+			switch key {
+			case "1":
+				m.switchTopLevel(screenApps)
+			case "2":
+				m.switchTopLevel(screenGroups)
+			case "3":
+				m.switchTopLevel(screenUsers)
+			}
 		}
 		return m, nil
 	}

@@ -34,6 +34,35 @@ func TestNumberKeysSwitchTopLevelViews(t *testing.T) {
 	}
 }
 
+func TestNumberKeysSwitchViewsDuringRefresh(t *testing.T) {
+	model := topLevelTestModel()
+	model.busy = "refreshing"
+
+	for _, tc := range []struct {
+		key  string
+		want screen
+	}{
+		{"2", screenGroups},
+		{"3", screenUsers},
+		{"1", screenApps},
+	} {
+		model.handleKey(keyMsg(tc.key))
+		if model.screen != tc.want {
+			t.Errorf("key %s selected screen %v during refresh, want %v", tc.key, model.screen, tc.want)
+		}
+	}
+}
+
+func TestNumberKeysRemainBlockedDuringMutation(t *testing.T) {
+	model := topLevelTestModel()
+	model.busy = "applying 1 change(s)"
+
+	model.handleKey(keyMsg("2"))
+	if model.screen != screenApps {
+		t.Fatalf("screen changed to %v during mutation, want Apps", model.screen)
+	}
+}
+
 func TestTopLevelFiltersRemainIndependent(t *testing.T) {
 	model := topLevelTestModel()
 	model.appFiltr = "alpha"
