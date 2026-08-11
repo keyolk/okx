@@ -23,8 +23,14 @@ func (m *Model) View() string {
 	switch m.screen {
 	case screenApps:
 		body = m.renderApps()
+	case screenGroups:
+		body = m.renderTopGroups()
+	case screenUsers:
+		body = m.renderTopUsers()
 	case screenAssignments:
 		body = m.renderAssignments()
+	case screenGroupApps:
+		body = m.renderGroupApps()
 	case screenUserApps:
 		body = m.renderUserApps()
 	case screenHelp:
@@ -48,35 +54,35 @@ func (m *Model) renderTooSmall() string {
 // ---- chrome ---------------------------------------------------------------
 
 func (m *Model) renderHeader() string {
-	var left, right string
+	left := m.renderTopTabs()
+	var right string
 	switch m.screen {
 	case screenApps:
-		left = m.st.title.Render("okx") + m.st.dim.Render("  apps")
-		right = m.st.dim.Render(fmt.Sprintf("%d apps · %s",
-			len(m.apps), shortOrg(m.app.Cfg.OrgURL)))
+		right = fmt.Sprintf("%d apps · %s", len(m.apps), shortOrg(m.app.Cfg.OrgURL))
+	case screenGroups:
+		right = fmt.Sprintf("%d groups · %s", len(m.groups), shortOrg(m.app.Cfg.OrgURL))
+	case screenUsers:
+		right = fmt.Sprintf("%d users · %s", len(m.users), shortOrg(m.app.Cfg.OrgURL))
 	case screenAssignments:
 		tab := "users"
 		if m.showGroups {
 			tab = "groups"
 		}
-		left = m.st.title.Render(m.curApp.Label) + m.st.dim.Render("  "+tab)
-		direct := 0
-		for _, a := range m.assignments {
-			if a.Direct {
-				direct++
-			}
-		}
-		right = m.st.dim.Render(fmt.Sprintf("%d users (%d direct) · %d groups",
-			len(m.assignments), direct, len(m.appGroups)))
+		right = fmt.Sprintf("%s · %s", m.curApp.Label, tab)
+	case screenGroupApps:
+		right = fmt.Sprintf("%s · %d apps", m.curGroup.Profile.Name, len(m.groupApps))
 	case screenUserApps:
-		left = m.st.title.Render(m.revUser.Profile.Login) +
-			m.st.dim.Render("  "+m.revUser.Name())
-		right = m.st.dim.Render(fmt.Sprintf("%d app(s) · %s", len(m.revAccess), m.revUser.Status))
+		right = fmt.Sprintf("%s · %d apps", m.revUser.Profile.Login, len(m.revAccess))
 	case screenHelp:
-		left = m.st.title.Render("okx") + m.st.dim.Render("  help")
+		right = "help"
 	}
 
-	line := padBetween(left, right, m.width)
+	rightWidth := m.width - lipgloss.Width(left) - 1
+	if rightWidth < 0 {
+		rightWidth = 0
+	}
+	right = truncate(right, rightWidth, m.gl.ellipsis)
+	line := padBetween(left, m.st.dim.Render(right), m.width)
 	sep := m.st.dim.Render(strings.Repeat("─", m.width))
 	if m.gl.check == asciiGlyphs.check {
 		sep = m.st.dim.Render(strings.Repeat("-", m.width))
@@ -95,18 +101,12 @@ func (m *Model) renderFooter() string {
 	case m.status != "":
 		status = m.st.success.Render(m.status)
 	case m.filtering:
-		target := m.appFiltr
-		if m.screen == screenAssignments {
-			target = m.asgFiltr
+		if target, ok := m.currentFilter(); ok {
+			status = m.st.filter.Render("/" + *target + "▏")
 		}
-		status = m.st.filter.Render("/" + target + "▏")
 	default:
-		filter := m.appFiltr
-		if m.screen == screenAssignments {
-			filter = m.asgFiltr
-		}
-		if filter != "" {
-			status = m.st.dim.Render("filter: ") + m.st.filter.Render(filter) +
+		if filter, ok := m.currentFilter(); ok && *filter != "" {
+			status = m.st.dim.Render("filter: ") + m.st.filter.Render(*filter) +
 				m.st.dim.Render("  (esc to clear)")
 		}
 	}
@@ -117,17 +117,17 @@ func (m *Model) renderFooter() string {
 
 func (m *Model) hints() []string {
 	switch m.screen {
-	case screenApps:
-		return []string{"j/k move", "enter open", "/ filter", "R refresh", "? help", "q quit"}
+	case screenApps, screenGroups, screenUsers:
+		return []string{"1/2/3 views", "j/k move", "enter open", "/ filter", "R refresh", "? help", "q quit"}
 	case screenAssignments:
 		if m.showGroups {
-			return []string{"j/k move", "tab users", "A add group", "d remove", "/ filter", "esc back"}
+			return []string{"1/2/3 views", "j/k move", "tab users", "A add group", "d remove", "/ filter", "esc back"}
 		}
-		return []string{"j/k move", "tab groups", "a add user", "d remove", "enter user apps", "esc back"}
-	case screenUserApps:
-		return []string{"j/k move", "esc back", "? help", "q quit"}
+		return []string{"1/2/3 views", "j/k move", "tab groups", "a add user", "d remove", "enter user apps", "esc back"}
+	case screenGroupApps, screenUserApps:
+		return []string{"1/2/3 views", "j/k move", "enter open", "esc back", "? help", "q back"}
 	default:
-		return []string{"any key to close"}
+		return []string{"1/2/3 views", "any key to close"}
 	}
 }
 
@@ -278,7 +278,7 @@ func (m *Model) renderUserApps() string {
 			truncate(accessVia(a.Direct, a.ViaGroups), wVia, m.gl.ellipsis)
 		prefix := " "
 		if i == m.revCur {
-			b.WriteString(m.st.selected.Render(m.gl.cursor) + marker + " " + m.st.selected.Render(line))
+			b.WriteString(m.st.selected.Render(m.gl.cursor) + marker + " " + m.st.selected.Render(line) + "\n")
 			continue
 		}
 		b.WriteString(prefix + marker + " " + line + "\n")
@@ -292,12 +292,13 @@ func (m *Model) renderHelp() string {
 		keys  [][2]string
 	}{
 		{"navigation", [][2]string{
+			{"1 / 2 / 3", "open Apps / Groups / Users"},
 			{"j / k, ↓ / ↑", "move"},
 			{"g / G", "top / bottom"},
 			{"ctrl+d / ctrl+u", "half page"},
 			{"enter, l", "drill in"},
 			{"esc, h", "back"},
-			{"q", "back, or quit at the app list"},
+			{"q", "back, or quit at a top-level view"},
 		}},
 		{"app view", [][2]string{
 			{"tab", "switch between assigned users and groups"},
@@ -584,4 +585,3 @@ func minInt(a, b int) int {
 	}
 	return b
 }
-

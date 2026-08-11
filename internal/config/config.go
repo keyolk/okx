@@ -6,6 +6,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,6 +79,15 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("no Okta API token: set okta.client.token in %s or $OKTA_API_TOKEN", path)
 	}
 	return cfg, nil
+}
+
+// CacheKey namespaces snapshots by both org and API token. Okta limits app
+// visibility to the token owner's admin scope, so reusing an org-only cache
+// after switching tokens can show the wrong apps. Only a short one-way digest
+// is persisted in the filename; the token itself never leaves config memory.
+func (c Config) CacheKey() string {
+	sum := sha256.Sum256([]byte(c.Token))
+	return fmt.Sprintf("%s-%x", c.OrgName(), sum[:6])
 }
 
 // OrgName extracts the org subdomain, used to namespace the cache directory so

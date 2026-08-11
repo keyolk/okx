@@ -173,8 +173,11 @@ func runMutation(ctx context.Context, verb, appQuery string, targets []string) e
 		}
 	}
 
-	// The snapshot is stale the moment a write lands.
-	c.Invalidate()
+	// The snapshot is stale the moment a write lands. Cache deletion failure must
+	// remain visible, but it must not report already-applied Okta writes as failed.
+	if err := c.Invalidate(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not invalidate cache: %v\n", err)
+	}
 
 	if flagJSON {
 		if err := writeJSON(results); err != nil {

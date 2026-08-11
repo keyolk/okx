@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -15,16 +16,21 @@ import (
 	"github.com/keyolk/okx/internal/okta"
 )
 
-// DefaultTTL is how long a snapshot is considered fresh enough to use without
-// comment. Assignments change on human timescales, not machine ones.
-const DefaultTTL = 15 * time.Minute
+// DefaultTTL is how long a snapshot is considered fresh. Okta directory data
+// changes slowly, and explicit refresh remains available whenever current data
+// is required.
+const DefaultTTL = 7 * 24 * time.Hour
+
+// ErrNoCache is returned in cache-only mode when no snapshot exists.
+var ErrNoCache = errors.New("no cached snapshot")
 
 // Context bundles everything a command needs.
 type Context struct {
-	Cfg    config.Config
-	Client *okta.Client
-	Index  *cache.Index
-	Path   string
+	Cfg          config.Config
+	Client       *okta.Client
+	Index        *cache.Index
+	Path         string
+	NeedsRefresh bool
 }
 
 // Options control how the context is built.
@@ -34,19 +40,29 @@ type Options struct {
 	Refresh bool
 	// TTL overrides DefaultTTL.
 	TTL time.Duration
+	// AllowStale returns an expired snapshot instead of blocking to replace it.
+	AllowStale bool
+	// DeferFetch returns an empty snapshot when no cache exists. The caller is
+	// responsible for calling Refetch asynchronously.
+	DeferFetch bool
+	// CacheOnly prohibits network access and returns ErrNoCache when absent.
+	CacheOnly bool
 	// Quiet suppresses the progress output on stderr.
 	Quiet bool
 }
 
-// Open loads config, restores or refreshes the cache, and returns a ready
-// context.
+// Open loads config and returns a ready context. Its behavior is explicit:
+// regular CLI commands synchronously replace an expired/missing snapshot;
+// TUI callers use AllowStale+DeferFetch to render immediately and refresh in a
+// Bubble Tea command; shell completion uses CacheOnly and never touches the
+// network.
 func Open(ctx context.Context, opts Options) (*Context, error) {
 	cfg, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		return nil, err
 	}
 	client := okta.New(cfg.OrgURL, cfg.Token)
-	path := cache.Path(cfg.OrgName())
+	path := cache.Path(cfg.CacheKey())
 
 	ttl := opts.TTL
 	if ttl == 0 {
@@ -60,49 +76,75 @@ func Open(ctx context.Context, opts Options) (*Context, error) {
 			return nil, fmt.Errorf("load cache: %w", err)
 		}
 		if snap != nil && snap.OrgURL != cfg.OrgURL {
-			snap = nil // cache belongs to a different org
-		}
-		if snap != nil && snap.Age() > ttl {
 			snap = nil
 		}
 	}
 
-	if snap == nil {
-		progress := progressWriter(opts.Quiet)
-		snap, err = cache.Fetch(ctx, client, cfg.OrgURL, progress)
-		if err != nil {
-			return nil, err
+	if snap != nil {
+		stale := snap.Age() > ttl
+		c := &Context{
+			Cfg: cfg, Client: client, Index: cache.NewIndex(snap), Path: path,
+			NeedsRefresh: stale,
 		}
-		if err := cache.Save(path, snap); err != nil {
-			// A cache we cannot persist is a performance problem, not a
-			// correctness one — warn and carry on with the in-memory copy.
-			fmt.Fprintf(os.Stderr, "warning: could not write cache: %v\n", err)
-		}
-		if !opts.Quiet {
-			fmt.Fprintf(os.Stderr, "\r\033[Kfetched %d apps, %d users, %d groups\n",
-				len(snap.Apps), len(snap.Users), len(snap.Groups))
+		if !stale || opts.AllowStale || opts.CacheOnly {
+			return c, nil
 		}
 	}
 
-	return &Context{Cfg: cfg, Client: client, Index: cache.NewIndex(snap), Path: path}, nil
+	if opts.CacheOnly {
+		return nil, ErrNoCache
+	}
+	if opts.DeferFetch && !opts.Refresh {
+		return &Context{
+			Cfg: cfg, Client: client, Index: cache.NewIndex(cache.Empty(cfg.OrgURL)),
+			Path: path, NeedsRefresh: true,
+		}, nil
+	}
+
+	c := &Context{
+		Cfg: cfg, Client: client, Index: cache.NewIndex(cache.Empty(cfg.OrgURL)),
+		Path: path, NeedsRefresh: true,
+	}
+	if err := c.Refetch(ctx, opts.Quiet); err != nil {
+		return nil, err
+	}
+	if !opts.Quiet {
+		fmt.Fprintf(os.Stderr, "\r\033[Kfetched %d apps, %d users, %d groups\n",
+			len(c.Index.Apps), len(c.Index.Users), len(c.Index.Groups))
+	}
+	return c, nil
 }
 
 // Invalidate drops the on-disk cache so the next Open refetches. Called after
 // any write, since a mutation makes the snapshot wrong immediately.
-func (c *Context) Invalidate() {
-	_ = os.Remove(c.Path)
+func (c *Context) Invalidate() error {
+	if err := os.Remove(c.Path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove cache: %w", err)
+	}
+	return nil
 }
 
-// Refetch pulls a fresh snapshot and replaces the in-process index.
-func (c *Context) Refetch(ctx context.Context, quiet bool) error {
+// FetchIndex pulls and persists a fresh snapshot without mutating Context. TUI
+// commands use this so Bubble Tea owns all model state changes in Update.
+func (c *Context) FetchIndex(ctx context.Context, quiet bool) (*cache.Index, error) {
 	snap, err := cache.Fetch(ctx, c.Client, c.Cfg.OrgURL, progressWriter(quiet))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := cache.Save(c.Path, snap); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not write cache: %v\n", err)
 	}
-	c.Index = cache.NewIndex(snap)
+	return cache.NewIndex(snap), nil
+}
+
+// Refetch pulls a fresh snapshot and replaces the in-process index.
+func (c *Context) Refetch(ctx context.Context, quiet bool) error {
+	index, err := c.FetchIndex(ctx, quiet)
+	if err != nil {
+		return err
+	}
+	c.Index = index
+	c.NeedsRefresh = false
 	return nil
 }
 

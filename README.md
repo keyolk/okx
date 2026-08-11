@@ -25,6 +25,7 @@ make install   # builds and copies to ~/.local/bin/okx
 ```
 okx                          # open the TUI (default)
 okx apps [filter]            # list apps
+okx search <query>           # search apps, groups, and members together
 okx show <app>               # who has the app, and why (direct / group / both)
 okx show <app> --groups      # list the assigned groups
 okx show <app> --csv         # CSV export
@@ -35,7 +36,7 @@ okx assign <app> <group>... --group
 okx unassign <app> <user>...
 okx unassign <app> <group>... --group
 okx whoami                   # token identity + visible scope
-okx refresh                  # refetch the snapshot
+okx refresh                  # refetch the snapshot (`refetch` alias also works)
 ```
 
 Every target resolves by exact ID, exact name, or unique fuzzy match; an
@@ -61,10 +62,12 @@ once after setup.
 
 ## TUI
 
-Drill-down stack: **apps → assignments → user's apps**.
+The default view is **1 Apps**, with **2 Groups** and **3 Users** as peer
+resource views. Press `1`, `2`, or `3` from any screen to switch immediately.
 
+- Apps drill down to assignments; Groups to granted apps; Users to app access
 - `j/k` move, `enter` drill in, `esc`/`h` back, `q` quit
-- `/` filter (fuzzy), `R` refresh, `?` help
+- `/` fuzzy-filters the current resource view; `R` refetches; `?` opens help
 - On an app: `tab` switches between users and groups
 - `a` opens a fuzzy multi-select user picker; `A` the group picker
 - `d` removes the selected assignment (with confirmation)
@@ -73,6 +76,9 @@ Drill-down stack: **apps → assignments → user's apps**.
 ## Cache
 
 The first run snapshots apps, users, groups, app assignments and group
-members into `~/Library/Caches/okx/<org>.json` (TTL 15 min). The snapshot is
-invalidated after any write. Okta rate-limits `/apps` at 50 req/min, so the
-cache is what makes the TUI responsive.
+members into `~/Library/Caches/okx/<org>-<token-digest>.json`. The default TTL
+is 7 days; use `--ttl` to override it, `--refresh` on any command to refetch
+first, or `okx refresh` / `okx refetch` explicitly. The TUI renders stale data
+immediately while refreshing it in the background. The snapshot is invalidated
+after any write. Okta rate-limits `/apps` at 50 req/min, so the cache is what
+makes the TUI responsive.
