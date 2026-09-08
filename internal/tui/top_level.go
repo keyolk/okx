@@ -39,9 +39,11 @@ func (m *Model) handleGroupsKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.curGroup = rows[m.clampIdx(m.groupCur, len(rows))]
+		// Members first: "who is in this group" is the question the group list
+		// raises. The apps it grants are one tab away.
 		m.loadGroupApps()
-		m.screen = screenGroupApps
-		return m, nil
+		m.groupAppBack = screenGroups
+		return m, m.openGroupMembers(screenGroups)
 	}
 	m.groupCur = m.clampIdx(m.groupCur, len(rows))
 	m.groupTop = scrollTo(m.groupTop, m.groupCur, m.listHeight())
@@ -92,6 +94,8 @@ func (m *Model) handleGroupAppsKey(key string) (tea.Model, tea.Cmd) {
 	case "h", "left":
 		m.back()
 		return m, nil
+	case "tab":
+		return m, m.openGroupMembers(m.groupAppBack)
 	case "enter", "l", "right":
 		if len(m.groupApps) == 0 {
 			return m, nil
@@ -139,6 +143,8 @@ func (m *Model) currentFilter() (*string, bool) {
 		return &m.userFiltr, true
 	case screenAssignments:
 		return &m.asgFiltr, true
+	case screenGroupMembers:
+		return &m.memberFiltr, true
 	default:
 		return nil, false
 	}
@@ -154,5 +160,7 @@ func (m *Model) resetCurrentCursor() {
 		m.userCur, m.userTop = 0, 0
 	case screenAssignments:
 		m.asgCur, m.asgTop = 0, 0
+	case screenGroupMembers:
+		m.memberCur, m.memberTop = 0, 0
 	}
 }

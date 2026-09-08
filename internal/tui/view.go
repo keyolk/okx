@@ -20,6 +20,22 @@ func (m *Model) View() string {
 	}
 
 	var body string
+	switch {
+	case m.refreshing() && m.app.Index.Empty() && isTopLevel(m.screen):
+		body = m.renderLoadingBody()
+	default:
+		body = m.renderScreen()
+	}
+
+	base := lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(), body, m.renderFooter())
+	if m.overlay == overlayNone {
+		return base
+	}
+	return m.renderOverlay(base)
+}
+
+func (m *Model) renderScreen() string {
+	var body string
 	switch m.screen {
 	case screenApps:
 		body = m.renderApps()
@@ -31,17 +47,14 @@ func (m *Model) View() string {
 		body = m.renderAssignments()
 	case screenGroupApps:
 		body = m.renderGroupApps()
+	case screenGroupMembers:
+		body = m.renderGroupMembers()
 	case screenUserApps:
 		body = m.renderUserApps()
 	case screenHelp:
 		body = m.renderHelp()
 	}
-
-	base := lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(), body, m.renderFooter())
-	if m.overlay == overlayNone {
-		return base
-	}
-	return m.renderOverlay(base)
+	return body
 }
 
 func (m *Model) renderTooSmall() string {
@@ -71,6 +84,8 @@ func (m *Model) renderHeader() string {
 		right = fmt.Sprintf("%s · %s", m.curApp.Label, tab)
 	case screenGroupApps:
 		right = fmt.Sprintf("%s · %d apps", m.curGroup.Profile.Name, len(m.groupApps))
+	case screenGroupMembers:
+		right = m.groupMembersTitle()
 	case screenUserApps:
 		right = fmt.Sprintf("%s · %d apps", m.revUser.Profile.Login, len(m.revAccess))
 	case screenHelp:
@@ -94,8 +109,8 @@ func (m *Model) renderFooter() string {
 	// Status line (transient) sits above the hints so the hints never move.
 	var status string
 	switch {
-	case m.busy != "":
-		status = m.st.info.Render(m.busy + "…")
+	case m.busyKind != busyNone:
+		status = m.renderProgress()
 	case m.status != "" && m.statusErr:
 		status = m.st.err.Render(m.status)
 	case m.status != "":
@@ -116,15 +131,26 @@ func (m *Model) renderFooter() string {
 }
 
 func (m *Model) hints() []string {
+	if m.busyKind == busyApply {
+		return []string{"applying changes", "q quit"}
+	}
 	switch m.screen {
 	case screenApps, screenGroups, screenUsers:
-		return []string{"1/2/3 views", "j/k move", "enter open", "/ filter", "R refresh", "? help", "q quit"}
+		refresh := "R refresh"
+		if m.refreshing() {
+			refresh = "refreshing…"
+		}
+		return []string{"1/2/3 views", "j/k move", "enter open", "/ filter", refresh, "? help", "q quit"}
 	case screenAssignments:
 		if m.showGroups {
 			return []string{"1/2/3 views", "j/k move", "tab users", "A add group", "d remove", "/ filter", "esc back"}
 		}
 		return []string{"1/2/3 views", "j/k move", "tab groups", "a add user", "d remove", "enter user apps", "esc back"}
-	case screenGroupApps, screenUserApps:
+	case screenGroupMembers:
+		return []string{"1/2/3 views", "j/k move", "tab apps", "enter user apps", "/ filter", "esc back"}
+	case screenGroupApps:
+		return []string{"1/2/3 views", "j/k move", "tab members", "enter open", "esc back", "? help"}
+	case screenUserApps:
 		return []string{"1/2/3 views", "j/k move", "enter open", "esc back", "? help", "q back"}
 	default:
 		return []string{"1/2/3 views", "any key to close"}
@@ -299,6 +325,14 @@ func (m *Model) renderHelp() string {
 			{"enter, l", "drill in"},
 			{"esc, h", "back"},
 			{"q", "back, or quit at a top-level view"},
+			{"ctrl+c", "quit from anywhere, including overlays and filters"},
+		}},
+		{"group view", [][2]string{
+			{"enter", "open the group's members"},
+			{"tab", "switch between members and the apps it grants"},
+			{"KEEPS", "apps the member also holds directly, so unassigning the"},
+			{"", "group would not take them away"},
+			{"?  in MEMBERS", "membership not in the snapshot yet — open it to resolve"},
 		}},
 		{"app view", [][2]string{
 			{"tab", "switch between assigned users and groups"},
@@ -310,6 +344,7 @@ func (m *Model) renderHelp() string {
 		{"general", [][2]string{
 			{"/", "filter the current list"},
 			{"R", "refresh the snapshot from Okta"},
+			{"", "browsing stays live during a refresh; a/A/d wait for it"},
 			{"?", "toggle this help"},
 		}},
 		{"reading the list", [][2]string{

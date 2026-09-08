@@ -81,16 +81,23 @@ type glyphSet struct {
 	ok       string
 	fail     string
 	ellipsis string
+	barFull  string
+	barEmpty string
+	spinner  []string
 }
 
 var unicodeGlyphs = glyphSet{
 	check: "◉", uncheck: "○", cursor: "▸", bullet: "·",
 	plus: "+", minus: "−", ok: "✓", fail: "✗", ellipsis: "…",
+	barFull: "━", barEmpty: "┄",
+	spinner: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
 }
 
 var asciiGlyphs = glyphSet{
 	check: "[x]", uncheck: "[ ]", cursor: ">", bullet: "-",
 	plus: "+", minus: "-", ok: "ok", fail: "!!", ellipsis: "...",
+	barFull: "#", barEmpty: ".",
+	spinner: []string{"|", "/", "-", "\\"},
 }
 
 func detectGlyphs() glyphSet {

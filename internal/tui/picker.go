@@ -151,7 +151,8 @@ func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatus("nothing to do", false)
 				return m, nil
 			}
-			m.busy = fmt.Sprintf("applying %d change(s)", applicable)
+			m.busyKind = busyApply
+			m.busyLabel = fmt.Sprintf("applying %d change(s)", applicable)
 			m.status = ""
 			return m, m.applyCmd(pending, m.curApp.ID)
 		case "n", "N", "esc", "q":
@@ -175,8 +176,6 @@ func (m *Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.overlay = overlayNone
 		return m, nil
-	case "ctrl+c":
-		return m, tea.Quit
 	case "down", "ctrl+n":
 		p.cur++
 	case "up", "ctrl+p":

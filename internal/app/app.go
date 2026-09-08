@@ -127,7 +127,14 @@ func (c *Context) Invalidate() error {
 // FetchIndex pulls and persists a fresh snapshot without mutating Context. TUI
 // commands use this so Bubble Tea owns all model state changes in Update.
 func (c *Context) FetchIndex(ctx context.Context, quiet bool) (*cache.Index, error) {
-	snap, err := cache.Fetch(ctx, c.Client, c.Cfg.OrgURL, progressWriter(quiet))
+	return c.FetchIndexProgress(ctx, progressWriter(quiet))
+}
+
+// FetchIndexProgress is FetchIndex with the caller's own progress sink. The TUI
+// uses it to render a live stage/percentage instead of a bare "refreshing…":
+// a full-org fetch is minutes of work, and silence there reads as a hang.
+func (c *Context) FetchIndexProgress(ctx context.Context, progress cache.Progress) (*cache.Index, error) {
+	snap, err := cache.Fetch(ctx, c.Client, c.Cfg.OrgURL, progress)
 	if err != nil {
 		return nil, err
 	}
@@ -153,10 +160,11 @@ func progressWriter(quiet bool) cache.Progress {
 		return nil
 	}
 	return func(stage string, done, total int) {
+		step, of := cache.StageIndex(stage)
 		if total > 0 {
-			fmt.Fprintf(os.Stderr, "\r\033[Kfetching %s… %d/%d", stage, done, total)
+			fmt.Fprintf(os.Stderr, "\r\033[K[%d/%d] fetching %s… %d/%d", step, of, stage, done, total)
 		} else {
-			fmt.Fprintf(os.Stderr, "\r\033[Kfetching %s…", stage)
+			fmt.Fprintf(os.Stderr, "\r\033[K[%d/%d] fetching %s…", step, of, stage)
 		}
 	}
 }

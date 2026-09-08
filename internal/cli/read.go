@@ -315,15 +315,9 @@ func newGroupCmd() *cobra.Command {
 
 			// Group members are only cached for app-assigned groups; fetch on
 			// demand for the rest so this command works for any group.
-			memberIDs, cached := c.Index.GroupMembers[g.ID]
-			if !cached {
-				members, err := c.Client.GroupMembers(cmd.Context(), g.ID)
-				if err != nil {
-					return err
-				}
-				for _, m := range members {
-					memberIDs = append(memberIDs, m.ID)
-				}
+			members, err := c.LoadGroupMembers(cmd.Context(), g.ID)
+			if err != nil {
+				return err
 			}
 
 			if flagJSON {
@@ -332,13 +326,9 @@ func newGroupCmd() *cobra.Command {
 					Login string `json:"login"`
 					Name  string `json:"name"`
 				}
-				rows := make([]mrow, 0, len(memberIDs))
-				for _, id := range memberIDs {
-					if u, ok := c.Index.User(id); ok {
-						rows = append(rows, mrow{u.ID, u.Profile.Login, u.Name()})
-					} else {
-						rows = append(rows, mrow{ID: id})
-					}
+				rows := make([]mrow, 0, len(members))
+				for _, u := range members {
+					rows = append(rows, mrow{u.ID, u.Profile.Login, u.Name()})
 				}
 				return writeJSON(map[string]any{
 					"group":   map[string]string{"id": g.ID, "name": g.Profile.Name, "type": g.Type},
@@ -356,21 +346,11 @@ func newGroupCmd() *cobra.Command {
 			} else {
 				fmt.Printf("grants: (no apps)\n")
 			}
-			fmt.Printf("\n%d member(s)\n\n", len(memberIDs))
+			fmt.Printf("\n%d member(s)\n\n", len(members))
 			t := newTable(os.Stdout)
 			t.row("LOGIN", "NAME")
-			ms := make([]string, 0, len(memberIDs))
-			for _, id := range memberIDs {
-				if u, ok := c.Index.User(id); ok {
-					ms = append(ms, u.Profile.Login+"\x00"+u.Name())
-				} else {
-					ms = append(ms, id+"\x00")
-				}
-			}
-			sort.Strings(ms)
-			for _, m := range ms {
-				parts := strings.SplitN(m, "\x00", 2)
-				t.row(parts[0], parts[1])
+			for _, u := range members {
+				t.row(u.Profile.Login, u.Name())
 			}
 			t.flush()
 			return nil

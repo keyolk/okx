@@ -83,6 +83,12 @@ func NewIndex(s *Snapshot) *Index {
 	return ix
 }
 
+// Empty reports whether the snapshot holds nothing yet — the deferred-fetch
+// case, where the UI has no rows to show until the first fetch lands.
+func (ix *Index) Empty() bool {
+	return len(ix.Apps) == 0 && len(ix.Users) == 0 && len(ix.Groups) == 0
+}
+
 // User looks up a user by ID.
 func (ix *Index) User(id string) (okta.User, bool) { u, ok := ix.userByID[id]; return u, ok }
 
@@ -91,6 +97,52 @@ func (ix *Index) Group(id string) (okta.Group, bool) { g, ok := ix.groupByID[id]
 
 // App looks up an app by ID.
 func (ix *Index) App(id string) (okta.App, bool) { a, ok := ix.appByID[id]; return a, ok }
+
+// HasMembers reports whether the snapshot resolved this group's membership.
+// Only groups assigned to an app are resolved eagerly, so a false here means
+// "not fetched yet", never "the group is empty" — a distinction the UI has to
+// make visible or every unfetched group reads as having zero members.
+func (ix *Index) HasMembers(groupID string) bool {
+	_, ok := ix.GroupMembers[groupID]
+	return ok
+}
+
+// AddUsers folds newly-seen users into the index without disturbing existing
+// entries. Used when a lazy fetch turns up someone the snapshot predates.
+func (ix *Index) AddUsers(users []okta.User) {
+	for _, u := range users {
+		if _, ok := ix.userByID[u.ID]; ok {
+			continue
+		}
+		ix.userByID[u.ID] = u
+		ix.Users = append(ix.Users, u)
+	}
+}
+
+// SetMembers records a lazily-resolved group membership.
+func (ix *Index) SetMembers(groupID string, userIDs []string) {
+	if ix.GroupMembers == nil {
+		ix.GroupMembers = map[string][]string{}
+	}
+	ix.GroupMembers[groupID] = userIDs
+}
+
+// Members resolves a group's members to users, in login order. Members the
+// snapshot cannot name are still listed, by ID, rather than silently dropped.
+func (ix *Index) Members(groupID string) []okta.User {
+	ids := ix.GroupMembers[groupID]
+	out := make([]okta.User, 0, len(ids))
+	for _, id := range ids {
+		u, ok := ix.userByID[id]
+		if !ok {
+			u = okta.User{ID: id}
+			u.Profile.Login = id
+		}
+		out = append(out, u)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Profile.Login < out[j].Profile.Login })
+	return out
+}
 
 // GroupName returns a group's name, or its raw ID if the group is not in the
 // snapshot (possible when a group was created after the last refresh).
@@ -243,6 +295,30 @@ func (ix *Index) UserApps(userID string) []UserAccess {
 // Progress reports refresh progress to the caller (TUI spinner, CLI stderr).
 type Progress func(stage string, done, total int)
 
+// Fetch stage names, in the order Fetch reports them.
+const (
+	StageApps         = "apps"
+	StageUsers        = "users"
+	StageGroups       = "groups"
+	StageAssignments  = "assignments"
+	StageGroupMembers = "group members"
+)
+
+// Stages lists the pipeline in order so a caller can render "[3/5]" without
+// restating the sequence.
+var Stages = []string{StageApps, StageUsers, StageGroups, StageAssignments, StageGroupMembers}
+
+// StageIndex reports the 1-based position of a stage. A stage name that is not
+// part of the fetch pipeline (a caller reporting its own work) returns 0.
+func StageIndex(stage string) (step, of int) {
+	for i, s := range Stages {
+		if s == stage {
+			return i + 1, len(Stages)
+		}
+	}
+	return 0, len(Stages)
+}
+
 // Fetch pulls a fresh snapshot from Okta.
 func Fetch(ctx context.Context, c *okta.Client, orgURL string, progress Progress) (*Snapshot, error) {
 	if progress == nil {
@@ -255,26 +331,29 @@ func Fetch(ctx context.Context, c *okta.Client, orgURL string, progress Progress
 		GroupMembers: map[string][]string{},
 	}
 
-	progress("apps", 0, 0)
+	progress(StageApps, 0, 0)
 	apps, err := c.Apps(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list apps: %w", err)
 	}
 	s.Apps = apps
+	progress(StageApps, len(apps), len(apps))
 
-	progress("users", 0, 0)
+	progress(StageUsers, 0, 0)
 	users, err := c.Users(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
 	s.Users = users
+	progress(StageUsers, len(users), len(users))
 
-	progress("groups", 0, 0)
+	progress(StageGroups, 0, 0)
 	groups, err := c.Groups(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list groups: %w", err)
 	}
 	s.Groups = groups
+	progress(StageGroups, len(groups), len(groups))
 
 	// Per-app assignments, in parallel but bounded: Okta's /apps rate limit is
 	// the tightest in the org and a burst here is what trips it.
@@ -285,6 +364,7 @@ func Fetch(ctx context.Context, c *okta.Client, orgURL string, progress Progress
 		errs []error
 		done int
 	)
+	progress(StageAssignments, 0, len(apps))
 	for _, app := range apps {
 		wg.Add(1)
 		go func(app okta.App) {
@@ -308,7 +388,7 @@ func Fetch(ctx context.Context, c *okta.Client, orgURL string, progress Progress
 				s.AppGroups[app.ID] = ag
 			}
 			done++
-			progress("assignments", done, len(apps))
+			progress(StageAssignments, done, len(apps))
 		}(app)
 	}
 	wg.Wait()
@@ -330,6 +410,7 @@ func Fetch(ctx context.Context, c *okta.Client, orgURL string, progress Progress
 	sort.Strings(gids)
 
 	done = 0
+	progress(StageGroupMembers, 0, len(gids))
 	for _, gid := range gids {
 		wg.Add(1)
 		go func(gid string) {
@@ -352,7 +433,7 @@ func Fetch(ctx context.Context, c *okta.Client, orgURL string, progress Progress
 				s.GroupMembers[gid] = ids
 			}
 			done++
-			progress("group members", done, len(gids))
+			progress(StageGroupMembers, done, len(gids))
 		}(gid)
 	}
 	wg.Wait()

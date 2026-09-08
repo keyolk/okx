@@ -4,7 +4,7 @@
 // stack rather than a persistent multi-panel, so narrow terminals stay useful.
 //
 //	1 Apps   → assignments → user apps
-//	2 Groups → granted apps
+//	2 Groups → members / granted apps (tab) → user apps
 //	3 Users  → user apps
 package tui
 
@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -30,6 +31,7 @@ const (
 	screenUsers
 	screenAssignments
 	screenGroupApps
+	screenGroupMembers
 	screenUserApps
 	screenHelp
 )
@@ -95,6 +97,13 @@ type Model struct {
 	groupApps      []okta.App
 	groupAppCur    int
 	groupAppTop    int
+	members        []memberRow
+	memberCur      int
+	memberTop      int
+	memberFiltr    string
+	membersLoading bool
+	memberBack     screen
+	groupAppBack   screen
 	revUser        okta.User
 	revAccess      []cache.UserAccess
 	revCur         int
@@ -112,8 +121,16 @@ type Model struct {
 	filtering bool
 	status    string
 	statusErr bool
-	busy      string
 	errText   string
+
+	// long-running operation state
+	busyKind  busyKind
+	busyLabel string
+	busyStart time.Time
+	prog      progressState
+	progCh    chan progressMsg
+	progGen   int
+	spinFrame int
 }
 
 type groupRow struct {
@@ -200,8 +217,7 @@ func (m *Model) Init() tea.Cmd {
 	if !m.app.NeedsRefresh {
 		return nil
 	}
-	m.busy = "refreshing"
-	return m.refreshCmd()
+	return m.startRefresh()
 }
 
 // ---- messages -------------------------------------------------------------
@@ -217,15 +233,11 @@ type applyDoneMsg struct {
 	err     error
 }
 
-func (m *Model) refreshCmd() tea.Cmd {
-	return func() tea.Msg {
-		index, err := m.app.FetchIndex(m.ctx, true)
-		return refreshDoneMsg{index: index, err: err}
-	}
-}
-
 func (m *Model) applyCmd(changes []plannedChange, appID string) tea.Cmd {
-	return func() tea.Msg {
+	sink, pump := m.newProgressSink()
+	ch := m.progCh
+	write := func() tea.Msg {
+		defer close(ch)
 		var applied, failed int
 		var firstErr error
 		for _, ch := range changes {
@@ -261,7 +273,7 @@ func (m *Model) applyCmd(changes []plannedChange, appID string) tea.Cmd {
 			// Never leave a now-wrong snapshot looking fresh if the follow-up
 			// fetch fails. A successful save supersedes an earlier delete error.
 			invalidateErr := m.app.Invalidate()
-			fresh, fetchErr := m.app.FetchIndex(m.ctx, true)
+			fresh, fetchErr := m.app.FetchIndexProgress(m.ctx, sink)
 			if fetchErr != nil {
 				if firstErr == nil {
 					if invalidateErr != nil {
@@ -276,6 +288,7 @@ func (m *Model) applyCmd(changes []plannedChange, appID string) tea.Cmd {
 		}
 		return applyDoneMsg{applied: applied, failed: failed, index: index, err: firstErr}
 	}
+	return tea.Batch(write, pump)
 }
 
 // ---- update ---------------------------------------------------------------
@@ -289,8 +302,42 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampTopLevel()
 		return m, nil
 
+	case progressMsg:
+		if msg.gen != m.progGen {
+			return m, nil // a superseded fetch still draining its channel
+		}
+		m.prog = progressState{stage: msg.stage, done: msg.done, total: msg.total, active: true}
+		return m, waitProgress(m.progCh, msg.gen)
+
+	case progressDoneMsg:
+		if msg.gen == m.progGen {
+			m.prog.active = false
+		}
+		return m, nil
+
+	case spinnerTickMsg:
+		if m.busyKind == busyNone {
+			return m, nil
+		}
+		m.spinFrame++
+		return m, spinnerTick()
+
+	case membersDoneMsg:
+		// A late arrival for a group the user already left is still worth keeping
+		// in the index, but must not take over the screen.
+		if msg.groupID != m.curGroup.ID {
+			return m, nil
+		}
+		m.membersLoading = false
+		if msg.err != nil {
+			m.setError(msg.err)
+			return m, nil
+		}
+		m.loadMembers()
+		return m, nil
+
 	case refreshDoneMsg:
-		m.busy = ""
+		m.endBusy()
 		if msg.err != nil {
 			m.setError(msg.err)
 			return m, nil
@@ -309,6 +356,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadAssignments()
 		case screenGroupApps:
 			m.loadGroupApps()
+		case screenGroupMembers:
+			m.loadGroupApps()
+			if m.app.Index.HasMembers(m.curGroup.ID) {
+				m.loadMembers()
+			}
 		case screenUserApps:
 			m.revAccess = m.app.Index.UserApps(m.revUser.ID)
 		}
@@ -316,7 +368,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case applyDoneMsg:
-		m.busy = ""
+		m.endBusy()
 		m.app.NeedsRefresh = msg.applied > 0 && msg.index == nil
 		if msg.index != nil {
 			m.app.Index = msg.index
@@ -349,27 +401,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ctrl+c quits from anywhere, ahead of every overlay and text field. It was
+	// only bound in the picker and on the top level, so the answer to "how do I
+	// get out of here" depended on which screen you were on.
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+
+	// Under a Korean input source the shortcut keys arrive as jamo (`q` → `ㅂ`).
+	// Rewrite them to the Latin key at the same physical position so shortcuts
+	// fire without switching the input source back. Skipped while a text field
+	// owns keys, where the jamo is the intended input.
+	if !m.isInTextInput() {
+		msg = normalizeCJKKey(msg)
+	}
 	key := msg.String()
 
 	// A running mutation owns the screen so a stray keypress cannot queue a
-	// second write against stale state. Refresh is read-only: keep the numbered
-	// resource views available while the first snapshot is loading.
-	if m.busy != "" {
-		if key == "q" || key == "ctrl+c" {
+	// second write against stale state.
+	if m.busyKind == busyApply {
+		if key == "q" {
 			return m, tea.Quit
-		}
-		if m.busy == "refreshing" {
-			switch key {
-			case "1":
-				m.switchTopLevel(screenApps)
-			case "2":
-				m.switchTopLevel(screenGroups)
-			case "3":
-				m.switchTopLevel(screenUsers)
-			}
 		}
 		return m, nil
 	}
+	// A refresh is read-only and the current index stays valid until it lands,
+	// so navigation, drill-down and filtering all continue to work. Only the
+	// keys that start a *write* or a second refresh are gated, below.
 
 	if m.overlay != overlayNone {
 		return m.handleOverlayKey(msg)
@@ -388,7 +446,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "3":
 		m.switchTopLevel(screenUsers)
 		return m, nil
-	case "q", "ctrl+c":
+	case "q":
 		if !isTopLevel(m.screen) {
 			m.back()
 			return m, nil
@@ -406,9 +464,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.back()
 		return m, nil
 	case "R":
-		m.busy = "refreshing"
-		m.status = ""
-		return m, m.refreshCmd()
+		if m.refreshing() {
+			m.setStatus("already refreshing", false)
+			return m, nil
+		}
+		return m, m.startRefresh()
 	case "/":
 		if _, ok := m.currentFilter(); ok {
 			m.filtering = true
@@ -427,6 +487,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleAssignmentsKey(key)
 	case screenGroupApps:
 		return m.handleGroupAppsKey(key)
+	case screenGroupMembers:
+		return m.handleGroupMembersKey(key)
 	case screenUserApps:
 		return m.handleUserAppsKey(key)
 	case screenHelp:
@@ -441,7 +503,10 @@ func (m *Model) back() {
 	case screenUserApps:
 		m.screen = m.detailBack
 	case screenGroupApps:
-		m.screen = screenGroups
+		m.screen = m.groupAppBack
+	case screenGroupMembers:
+		m.screen = m.memberBack
+		m.memberFiltr = ""
 	case screenAssignments:
 		m.screen = m.assignmentBack
 		m.asgFiltr = ""
@@ -505,12 +570,21 @@ func (m *Model) handleAssignmentsKey(key string) (tea.Model, tea.Cmd) {
 		m.back()
 		return m, nil
 	case "a":
+		if m.blockedByRefresh() {
+			return m, nil
+		}
 		m.openPicker(overlayPickUser)
 		return m, nil
 	case "A":
+		if m.blockedByRefresh() {
+			return m, nil
+		}
 		m.openPicker(overlayPickGroup)
 		return m, nil
 	case "d", "delete", "backspace":
+		if m.blockedByRefresh() {
+			return m, nil
+		}
 		return m.planRemoveSelected()
 	case "enter", "l", "right":
 		return m.drillIntoSelected()
@@ -545,13 +619,12 @@ func (m *Model) drillIntoSelected() (tea.Model, tea.Cmd) {
 		if len(rows) == 0 {
 			return m, nil
 		}
-		// Drilling into a group shows the app list of… nothing useful; instead
-		// jump the user list filtered to that group's members would need a new
-		// screen. Keep it simple: report the membership count.
-		g := rows[m.clampIdx(m.asgCur, len(rows))]
-		m.setStatus(fmt.Sprintf("%s — %d member(s), id %s",
-			g.group.Profile.Name, g.members, g.group.ID), false)
-		return m, nil
+		// "Who does this group actually bring in?" is the question the groups tab
+		// raises, so drilling in opens the membership rather than reporting a count.
+		m.curGroup = rows[m.clampIdx(m.asgCur, len(rows))].group
+		m.loadGroupApps()
+		m.groupAppBack = screenAssignments
+		return m, m.openGroupMembers(screenAssignments)
 	}
 	rows := m.filteredAssignments()
 	if len(rows) == 0 {
