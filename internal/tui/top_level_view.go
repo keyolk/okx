@@ -11,7 +11,18 @@ func (m *Model) activeTopLevel() screen {
 
 func (m *Model) topLevelFor(s screen) screen {
 	switch s {
-	case screenGroups, screenGroupApps:
+	case screenGroups:
+		return screenGroups
+	case screenGroupApps:
+		if m.groupAppBack == screenAssignments {
+			return m.topLevelFor(screenAssignments)
+		}
+		return screenGroups
+	case screenGroupMembers:
+		// Reached from an app's groups tab, this is still an Apps-flow screen.
+		if m.memberBack == screenAssignments {
+			return m.topLevelFor(screenAssignments)
+		}
 		return screenGroups
 	case screenUsers:
 		return screenUsers
@@ -22,6 +33,9 @@ func (m *Model) topLevelFor(s screen) screen {
 	case screenUserApps:
 		if m.detailBack == screenUsers {
 			return screenUsers
+		}
+		if m.detailBack == screenGroupMembers {
+			return m.topLevelFor(screenGroupMembers)
 		}
 		if m.detailBack == screenAssignments && m.assignmentBack == screenGroupApps {
 			return screenGroups
@@ -65,10 +79,7 @@ func (m *Model) renderTopGroups() string {
 	b.WriteByte('\n')
 	for i := m.groupTop; i < len(rows) && i < m.groupTop+h; i++ {
 		group := rows[i]
-		members := "—"
-		if ids, ok := m.app.Index.GroupMembers[group.ID]; ok {
-			members = strconv.Itoa(len(ids))
-		}
+		members := m.memberCountLabel(group.ID)
 		line := pad(truncate(group.Profile.Name, wName, m.gl.ellipsis), wName) + " " +
 			padLeft(strconv.Itoa(m.groupAppCounts[group.ID]), wApps) + " " +
 			padLeft(members, wMembers) + " " +

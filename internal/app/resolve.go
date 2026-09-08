@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -175,6 +176,30 @@ func (c *Context) AppHasGroup(appID, groupID string) bool {
 		}
 	}
 	return false
+}
+
+// LoadGroupMembers resolves one group's membership on demand and folds it into
+// the current index. The snapshot only pre-resolves groups assigned to an app
+// (see cache.Fetch), so browsing any other group needs this one extra call —
+// far cheaper than fetching all 500-odd groups up front against a 50 req/min
+// rate limit.
+func (c *Context) LoadGroupMembers(ctx context.Context, groupID string) ([]okta.User, error) {
+	if c.Index.HasMembers(groupID) {
+		return c.Index.Members(groupID), nil
+	}
+	members, err := c.Client.GroupMembers(ctx, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("group members: %w", err)
+	}
+	ids := make([]string, len(members))
+	for i, m := range members {
+		ids[i] = m.ID
+	}
+	c.Index.SetMembers(groupID, ids)
+	// A member who joined after the last snapshot is not in Users yet; keeping
+	// the fetched records means the list shows a login instead of a bare ID.
+	c.Index.AddUsers(members)
+	return c.Index.Members(groupID), nil
 }
 
 // Assignments is a convenience passthrough to the index.

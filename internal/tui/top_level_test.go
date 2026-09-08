@@ -36,7 +36,7 @@ func TestNumberKeysSwitchTopLevelViews(t *testing.T) {
 
 func TestNumberKeysSwitchViewsDuringRefresh(t *testing.T) {
 	model := topLevelTestModel()
-	model.busy = "refreshing"
+	model.busyKind = busyRefresh
 
 	for _, tc := range []struct {
 		key  string
@@ -55,7 +55,7 @@ func TestNumberKeysSwitchViewsDuringRefresh(t *testing.T) {
 
 func TestNumberKeysRemainBlockedDuringMutation(t *testing.T) {
 	model := topLevelTestModel()
-	model.busy = "applying 1 change(s)"
+	model.busyKind = busyApply
 
 	model.handleKey(keyMsg("2"))
 	if model.screen != screenApps {
@@ -88,8 +88,13 @@ func TestGroupAndUserViewsDrillDownAndBack(t *testing.T) {
 
 	model.handleKey(keyMsg("2"))
 	model.handleKey(keyMsg("enter"))
+	// A group opens on its membership; its apps are one tab away.
+	if model.screen != screenGroupMembers || len(model.members) != 1 {
+		t.Fatalf("group drill-down: screen=%v members=%#v", model.screen, model.members)
+	}
+	model.handleKey(keyMsg("tab"))
 	if model.screen != screenGroupApps || len(model.groupApps) != 1 || model.groupApps[0].ID != "app-1" {
-		t.Fatalf("group drill-down: screen=%v apps=%#v", model.screen, model.groupApps)
+		t.Fatalf("group apps tab: screen=%v apps=%#v", model.screen, model.groupApps)
 	}
 	model.handleKey(keyMsg("enter"))
 	if model.screen != screenAssignments || model.assignmentBack != screenGroupApps || !model.showGroups {
