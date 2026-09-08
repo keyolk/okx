@@ -325,6 +325,7 @@ func (m *Model) renderHelp() string {
 			{"enter, l", "drill in"},
 			{"esc, h", "back"},
 			{"q", "back, or quit at a top-level view"},
+			{"ctrl+c", "quit from anywhere, including overlays and filters"},
 		}},
 		{"group view", [][2]string{
 			{"enter", "open the group's members"},

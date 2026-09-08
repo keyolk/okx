@@ -176,8 +176,6 @@ func (m *Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.overlay = overlayNone
 		return m, nil
-	case "ctrl+c":
-		return m, tea.Quit
 	case "down", "ctrl+n":
 		p.cur++
 	case "up", "ctrl+p":

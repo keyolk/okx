@@ -164,9 +164,12 @@ func topLevelTestModel() *Model {
 }
 
 func keyMsg(key string) tea.KeyMsg {
-	if key == "enter" || key == "esc" {
-		typeByName := map[string]tea.KeyType{"enter": tea.KeyEnter, "esc": tea.KeyEsc}
-		return tea.KeyMsg{Type: typeByName[key]}
+	if typ, ok := map[string]tea.KeyType{
+		"enter":  tea.KeyEnter,
+		"esc":    tea.KeyEsc,
+		"ctrl+c": tea.KeyCtrlC,
+	}[key]; ok {
+		return tea.KeyMsg{Type: typ}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 }

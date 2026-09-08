@@ -401,12 +401,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ctrl+c quits from anywhere, ahead of every overlay and text field. It was
+	// only bound in the picker and on the top level, so the answer to "how do I
+	// get out of here" depended on which screen you were on.
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+
+	// Under a Korean input source the shortcut keys arrive as jamo (`q` → `ㅂ`).
+	// Rewrite them to the Latin key at the same physical position so shortcuts
+	// fire without switching the input source back. Skipped while a text field
+	// owns keys, where the jamo is the intended input.
+	if !m.isInTextInput() {
+		msg = normalizeCJKKey(msg)
+	}
 	key := msg.String()
 
 	// A running mutation owns the screen so a stray keypress cannot queue a
 	// second write against stale state.
 	if m.busyKind == busyApply {
-		if key == "q" || key == "ctrl+c" {
+		if key == "q" {
 			return m, tea.Quit
 		}
 		return m, nil
@@ -432,7 +446,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "3":
 		m.switchTopLevel(screenUsers)
 		return m, nil
-	case "q", "ctrl+c":
+	case "q":
 		if !isTopLevel(m.screen) {
 			m.back()
 			return m, nil
