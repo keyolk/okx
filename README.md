@@ -68,10 +68,26 @@ resource views. Press `1`, `2`, or `3` from any screen to switch immediately.
 - Apps drill down to assignments; Groups to granted apps; Users to app access
 - `j/k` move, `enter` drill in, `esc`/`h` back, `q` quit
 - `/` fuzzy-filters the current resource view; `R` refetches; `?` opens help
+- `:` opens a command palette of every action the current screen can run
 - On an app: `tab` switches between users and groups
-- `a` opens a fuzzy multi-select user picker; `A` the group picker
-- `d` removes the selected assignment (with confirmation)
+- `a` assigns to the shown tab (users or groups) through a fuzzy multi-select
+  picker; `A` always opens the group picker
+- `d` removes the selected assignment (confirm with `y`)
 - `D` / `G` markers distinguish direct vs group-derived access
+
+The footer, `?` help and the palette are all generated from one key table, so
+they always match what the keys do. Rebind any action in
+`~/.config/okx/keys.yaml` (`$XDG_CONFIG_HOME` honoured); `?` lists the
+actions, and `context.action` rebinds one context only:
+
+```yaml
+list.down: [j, down, ctrl+n]
+refresh: [R, ctrl+r]
+```
+
+A file that would hide quit/help or bind one key twice is rejected with a
+message, and the defaults stay. The last tab, each tab's filter and selected
+row are kept in `~/.local/state/okx/ui.json` (`$XDG_STATE_HOME`).
 
 ## Cache
 
