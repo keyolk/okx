@@ -7,6 +7,10 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/keyolk/tuikit/input"
+	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/render"
+	"github.com/keyolk/tuikit/toast"
 
 	"github.com/keyolk/okx/internal/okta"
 )
@@ -71,12 +75,9 @@ func (m *Model) renderHeader() string {
 	left := m.renderTopTabs()
 	var right string
 	switch m.screen {
-	case screenApps:
-		right = fmt.Sprintf("%d apps · %s", len(m.apps), shortOrg(m.app.Cfg.OrgURL))
-	case screenGroups:
-		right = fmt.Sprintf("%d groups · %s", len(m.groups), shortOrg(m.app.Cfg.OrgURL))
-	case screenUsers:
-		right = fmt.Sprintf("%d users · %s", len(m.users), shortOrg(m.app.Cfg.OrgURL))
+	case screenApps, screenGroups, screenUsers:
+		// The counts moved into the tab badges, where all three are visible.
+		right = shortOrg(m.app.Cfg.OrgURL)
 	case screenAssignments:
 		tab := "users"
 		if m.showGroups {
@@ -97,7 +98,7 @@ func (m *Model) renderHeader() string {
 	if rightWidth < 0 {
 		rightWidth = 0
 	}
-	right = truncate(right, rightWidth, m.gl.ellipsis)
+	right = render.TruncateMarker(right, rightWidth, m.gl.ellipsis)
 	line := padBetween(left, m.st.dim.Render(right), m.width)
 	sep := m.st.dim.Render(strings.Repeat("─", m.width))
 	if m.gl.check == asciiGlyphs.check {
@@ -107,57 +108,43 @@ func (m *Model) renderHeader() string {
 }
 
 func (m *Model) renderFooter() string {
-	// Status line (transient) sits above the hints so the hints never move.
-	// The filter prompt comes first: it is the only echo of what the user is
-	// typing, and a leftover status or a refresh progress line used to hide it.
+	// The status row sits above the hints so the hints never move. The filter
+	// prompt comes first: it is the only echo of what the user is typing, and
+	// a toast or a refresh progress line used to hide it.
 	var status string
 	switch {
 	case m.filtering:
-		if target, ok := m.currentFilter(); ok {
-			status = m.st.filter.Render("/" + *target + "▏")
+		if f, ok := m.filterInput(); ok {
+			status = m.st.filter.Render("/") + f.View(m.width-1, true, m.inputStyle())
 		}
 	case m.busyKind != busyNone:
 		status = m.renderProgress()
-	case m.status != "" && m.statusErr:
-		status = m.st.err.Render(m.status)
-	case m.status != "":
-		status = m.st.success.Render(m.status)
+	case m.toasts.Len() > 0 && !m.toasts.Held():
+		status = toast.View(m.toasts, m.width, m.toastStyles())
 	default:
 		if filter, ok := m.currentFilter(); ok && *filter != "" {
 			status = m.st.dim.Render("filter: ") + m.st.filter.Render(*filter) +
-				m.st.dim.Render("  (esc to clear)")
+				m.st.dim.Render("  ("+m.keyName(m.active(), "filter")+" to edit)")
 		}
 	}
-
-	hints := m.st.footer.Render(strings.Join(m.hints(), m.st.dim.Render(" · ")))
-	return status + "\n" + truncate(hints, m.width, m.gl.ellipsis)
+	return status + "\n" + m.footerFor(m.active(), m.width)
 }
 
-func (m *Model) hints() []string {
-	if m.busyKind == busyApply {
-		return []string{"applying changes", "q quit"}
-	}
-	switch m.screen {
-	case screenApps, screenGroups, screenUsers:
-		refresh := "R refresh"
-		if m.refreshing() {
-			refresh = "refreshing…"
-		}
-		return []string{"1/2/3 views", "j/k move", "enter open", "/ filter", refresh, "? help", "q quit"}
-	case screenAssignments:
-		if m.showGroups {
-			return []string{"1/2/3 views", "j/k move", "tab users", "A add group", "d remove", "/ filter", "esc back"}
-		}
-		return []string{"1/2/3 views", "j/k move", "tab groups", "a add user", "d remove", "enter user apps", "esc back"}
-	case screenGroupMembers:
-		return []string{"1/2/3 views", "j/k move", "tab apps", "enter user apps", "/ filter", "esc back"}
-	case screenGroupApps:
-		return []string{"1/2/3 views", "j/k move", "tab members", "enter open", "esc back", "? help"}
-	case screenUserApps:
-		return []string{"1/2/3 views", "j/k move", "enter open", "esc back", "? help", "q back"}
-	default:
-		return []string{"1/2/3 views", "any key to close"}
-	}
+// footerFor is the hint line for a context stack, derived from the binding
+// table: what it shows is exactly what the keys do there.
+func (m *Model) footerFor(stack []keys.Ctx, width int) string {
+	return m.km.Or(defaultKeymap()).Footer(stack, width, m.keyOpts(), m.footerStyle())
+}
+
+// inputStyle draws every text field: the filter, the picker query and the
+// palette query.
+func (m *Model) inputStyle() input.Style {
+	return input.Style{Text: m.st.filter, Placeholder: m.st.dim}
+}
+
+func (m *Model) toastStyles() toast.Styles {
+	return toast.Styles{Info: m.st.info, Success: m.st.success, Warn: m.st.warn, Error: m.st.err,
+		ASCII: m.gl.check == asciiGlyphs.check}
 }
 
 // ---- app list -------------------------------------------------------------
@@ -175,12 +162,12 @@ func (m *Model) renderApps() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.header.Render(
-		pad("APP", wLabel) + " " + padLeft("USERS", wUsers) + " " +
-			padLeft("DIRECT", wDirect) + " " + padLeft("GROUPS", wGroups) + " " +
-			pad("SIGN-ON", wMode)))
+		render.PadRight("APP", wLabel) + " " + render.PadLeft("USERS", wUsers) + " " +
+			render.PadLeft("DIRECT", wDirect) + " " + render.PadLeft("GROUPS", wGroups) + " " +
+			render.PadRight("SIGN-ON", wMode)))
 	b.WriteByte('\n')
 
-	for i := m.appTop; i < len(rows) && i < m.appTop+h; i++ {
+	m.listLines(&b, len(rows), m.appCur, m.appTop, h, func(i int, sel bool) string {
 		a := rows[i]
 		users := len(m.app.Index.AppUsers[a.ID])
 		direct := 0
@@ -191,20 +178,18 @@ func (m *Model) renderApps() string {
 		}
 		groups := len(m.app.Index.AppGroups[a.ID])
 
-		label := truncate(a.Label, wLabel, m.gl.ellipsis)
-		line := pad(label, wLabel) + " " +
-			padLeft(strconv.Itoa(users), wUsers) + " " +
-			padLeft(strconv.Itoa(direct), wDirect) + " " +
-			padLeft(strconv.Itoa(groups), wGroups) + " " +
-			pad(truncate(a.SignOnMode, wMode, m.gl.ellipsis), wMode)
+		label := render.TruncateMarker(a.Label, wLabel, m.gl.ellipsis)
+		line := render.PadRight(label, wLabel) + " " +
+			render.PadLeft(strconv.Itoa(users), wUsers) + " " +
+			render.PadLeft(strconv.Itoa(direct), wDirect) + " " +
+			render.PadLeft(strconv.Itoa(groups), wGroups) + " " +
+			render.PadRight(render.TruncateMarker(a.SignOnMode, wMode, m.gl.ellipsis), wMode)
 
-		if i == m.appCur {
-			b.WriteString(m.st.selected.Render(m.gl.cursor + truncate(line, m.width-2, m.gl.ellipsis)))
-		} else {
-			b.WriteString(" " + line)
+		if sel {
+			return m.st.selected.Render(m.gl.cursor + render.TruncateMarker(line, m.width-2, m.gl.ellipsis))
 		}
-		b.WriteByte('\n')
-	}
+		return " " + line
+	})
 	return fillHeight(b.String(), h+1)
 }
 
@@ -226,10 +211,10 @@ func (m *Model) renderAssignments() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.header.Render(
-		pad("LOGIN", wLogin) + " " + pad("STATUS", wStatus) + " " + pad("ACCESS VIA", wVia)))
+		render.PadRight("LOGIN", wLogin) + " " + render.PadRight("STATUS", wStatus) + " " + render.PadRight("ACCESS VIA", wVia)))
 	b.WriteByte('\n')
 
-	for i := m.asgTop; i < len(rows) && i < m.asgTop+h; i++ {
+	m.listLines(&b, len(rows), m.asgCur, m.asgTop, h, func(i int, sel bool) string {
 		a := rows[i]
 		// Marker doubles the direct/group signal so it survives monochrome.
 		marker := m.st.warn.Render("G")
@@ -237,19 +222,15 @@ func (m *Model) renderAssignments() string {
 			marker = m.st.success.Render("D")
 		}
 		via := accessVia(a.Direct, a.ViaGroups)
-		line := pad(truncate(a.User.Profile.Login, wLogin-2, m.gl.ellipsis), wLogin-2) + " " +
-			pad(truncate(a.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
-			truncate(via, wVia, m.gl.ellipsis)
+		line := render.PadRight(render.TruncateMarker(a.User.Profile.Login, wLogin-2, m.gl.ellipsis), wLogin-2) + " " +
+			render.PadRight(render.TruncateMarker(a.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
+			render.TruncateMarker(via, wVia, m.gl.ellipsis)
 
-		prefix := " "
-		if i == m.asgCur {
-			prefix = m.gl.cursor
-			b.WriteString(m.st.selected.Render(prefix) + marker + " " + m.st.selected.Render(line))
-		} else {
-			b.WriteString(prefix + marker + " " + line)
+		if sel {
+			return m.st.selected.Render(m.gl.cursor) + marker + " " + m.st.selected.Render(line)
 		}
-		b.WriteByte('\n')
-	}
+		return " " + marker + " " + line
+	})
 	return fillHeight(b.String(), h+1)
 }
 
@@ -265,21 +246,19 @@ func (m *Model) renderAppGroups() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.header.Render(
-		pad("GROUP", wName) + " " + padLeft("MEMBERS", wMembers) + "  " + pad("ID", 22)))
+		render.PadRight("GROUP", wName) + " " + render.PadLeft("MEMBERS", wMembers) + "  " + render.PadRight("ID", 22)))
 	b.WriteByte('\n')
 
-	for i := m.asgTop; i < len(rows) && i < m.asgTop+h; i++ {
+	m.listLines(&b, len(rows), m.asgCur, m.asgTop, h, func(i int, sel bool) string {
 		g := rows[i]
-		line := pad(truncate(g.group.Profile.Name, wName, m.gl.ellipsis), wName) + " " +
-			padLeft(strconv.Itoa(g.members), wMembers) + "  " +
+		line := render.PadRight(render.TruncateMarker(g.group.Profile.Name, wName, m.gl.ellipsis), wName) + " " +
+			render.PadLeft(strconv.Itoa(g.members), wMembers) + "  " +
 			m.st.dim.Render(g.group.ID)
-		if i == m.asgCur {
-			b.WriteString(m.st.selected.Render(m.gl.cursor + line))
-		} else {
-			b.WriteString(" " + line)
+		if sel {
+			return m.st.selected.Render(m.gl.cursor + line)
 		}
-		b.WriteByte('\n')
-	}
+		return " " + line
+	})
 	return fillHeight(b.String(), h+1)
 }
 
@@ -293,79 +272,59 @@ func (m *Model) renderUserApps() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.header.Render(
-		pad("APP", wApp) + " " + pad("STATUS", 14) + " " + pad("ACCESS VIA", wVia)))
+		render.PadRight("APP", wApp) + " " + render.PadRight("STATUS", 14) + " " + render.PadRight("ACCESS VIA", wVia)))
 	b.WriteByte('\n')
 
-	for i := m.revTop; i < len(m.revAccess) && i < m.revTop+h; i++ {
+	m.listLines(&b, len(m.revAccess), m.revCur, m.revTop, h, func(i int, sel bool) string {
 		a := m.revAccess[i]
 		marker := m.st.warn.Render("G")
 		if a.Direct {
 			marker = m.st.success.Render("D")
 		}
-		line := pad(truncate(a.App.Label, wApp-2, m.gl.ellipsis), wApp-2) + " " +
-			pad(truncate(a.Status, 14, m.gl.ellipsis), 14) + " " +
-			truncate(accessVia(a.Direct, a.ViaGroups), wVia, m.gl.ellipsis)
-		prefix := " "
-		if i == m.revCur {
-			b.WriteString(m.st.selected.Render(m.gl.cursor) + marker + " " + m.st.selected.Render(line) + "\n")
-			continue
+		line := render.PadRight(render.TruncateMarker(a.App.Label, wApp-2, m.gl.ellipsis), wApp-2) + " " +
+			render.PadRight(render.TruncateMarker(a.Status, 14, m.gl.ellipsis), 14) + " " +
+			render.TruncateMarker(accessVia(a.Direct, a.ViaGroups), wVia, m.gl.ellipsis)
+		if sel {
+			return m.st.selected.Render(m.gl.cursor) + marker + " " + m.st.selected.Render(line)
 		}
-		b.WriteString(prefix + marker + " " + line + "\n")
-	}
+		return " " + marker + " " + line
+	})
 	return fillHeight(b.String(), h+1)
 }
 
-func (m *Model) renderHelp() string {
-	sections := []struct {
-		title string
-		keys  [][2]string
-	}{
-		{"navigation", [][2]string{
-			{"1 / 2 / 3", "open Apps / Groups / Users"},
-			{"j / k, ↓ / ↑", "move"},
-			{"g / G", "top / bottom"},
-			{"ctrl+d / ctrl+u", "half page"},
-			{"enter, l", "drill in"},
-			{"esc, h", "back"},
-			{"q", "back, or quit at a top-level view"},
-			{"ctrl+c", "quit from anywhere, including overlays and filters"},
-		}},
-		{"group view", [][2]string{
-			{"enter", "open the group's members"},
-			{"tab", "switch between members and the apps it grants"},
-			{"KEEPS", "apps the member also holds directly, so unassigning the"},
-			{"", "group would not take them away"},
-			{"?  in MEMBERS", "membership not in the snapshot yet — open it to resolve"},
-		}},
-		{"app view", [][2]string{
-			{"tab", "switch between assigned users and groups"},
-			{"a", "assign users (fuzzy picker, tab to multi-select)"},
-			{"A", "assign groups"},
-			{"d", "remove the selected assignment"},
-			{"enter", "on a user: show every app that user has"},
-		}},
-		{"general", [][2]string{
-			{"/", "filter the current list"},
-			{"R", "refresh the snapshot from Okta"},
-			{"", "browsing stays live during a refresh; a/A/d wait for it"},
-			{"?", "toggle this help"},
-		}},
-		{"reading the list", [][2]string{
-			{"D", "direct assignment — d removes it"},
-			{"G", "access comes from a group — remove the group instead"},
-			{"direct + group", "d leaves group access intact"},
-		}},
-	}
+// helpSections documents every screen, the current one first, from the same
+// table dispatch reads; the legend that explains the list columns follows.
+func (m *Model) helpSections() []keys.Section {
+	stacks := append([][]keys.Ctx{stackFor(m.helpBack)}, allStacks...)
+	secs := m.km.Or(defaultKeymap()).Help(m.keyOpts(), stacks...)
+	return append(secs, legendSections...)
+}
 
-	var b strings.Builder
-	for _, s := range sections {
-		b.WriteString(m.st.accent.Render(s.title) + "\n")
-		for _, k := range s.keys {
-			b.WriteString("  " + pad(m.st.info.Render(k[0]), 32) + m.st.dim.Render(k[1]) + "\n")
-		}
-		b.WriteByte('\n')
-	}
-	return fillHeight(b.String(), m.listHeight()+1)
+// legendSections explain what the lists show. They are not actions, so they
+// carry no Action and are not part of the binding table.
+var legendSections = []keys.Section{{
+	Title: "reading the lists",
+	Entries: []keys.Entry{
+		{Keys: []string{"D"}, Help: "direct assignment — d removes it"},
+		{Keys: []string{"G"}, Help: "access comes from a group — remove the group instead"},
+		{Keys: []string{"direct + group"}, Help: "d leaves group access intact"},
+		{Keys: []string{"KEEPS"}, Help: "apps the member also holds directly; unassigning the group leaves them"},
+		{Keys: []string{"? in MEMBERS"}, Help: "membership not in the snapshot yet — open the group to resolve it"},
+	},
+	Notes: []string{"Browsing stays live during a refresh; assign and remove wait for it to land."},
+}}
+
+func (m *Model) helpRows() int { return m.listHeight() + 1 }
+
+// scrollHelp moves the help page and stores the offset RenderHelp clamps, so
+// holding j past the end does not grow it.
+func (m *Model) scrollHelp(delta int) {
+	_, m.helpOff = keys.RenderHelp(m.helpSections(), max(m.width, 1), m.helpRows(), m.helpOff+delta, keys.HelpStyle{})
+}
+
+func (m *Model) renderHelp() string {
+	lines, _ := keys.RenderHelp(m.helpSections(), m.width, m.helpRows(), m.helpOff, m.helpStyle())
+	return fillHeight(strings.Join(lines, "\n")+"\n", m.helpRows())
 }
 
 // ---- overlays -------------------------------------------------------------
@@ -381,47 +340,21 @@ func (m *Model) renderOverlay(base string) string {
 		box = m.st.modalWarn.Render(
 			m.st.err.Render("error") + "\n\n" +
 				wrap(m.errText, minInt(m.width-8, 76)) + "\n\n" +
-				m.st.dim.Render("esc to dismiss"))
+				m.footerFor(stackError, minInt(m.width-8, 76)))
+	case overlayPalette:
+		box = m.renderPalette()
 	}
 	if box == "" {
 		return base
 	}
-	return spliceCenter(base, box, m.width, m.height)
-}
-
-// spliceCenter draws box centred over base, keeping the base rows visible
-// around it. lipgloss.Place put the box on a blank screen, so the list the
-// user was acting on vanished behind every picker and confirm.
-func spliceCenter(base, box string, width, height int) string {
-	rows := strings.Split(base, "\n")
-	for len(rows) < height {
-		rows = append(rows, "")
-	}
-	boxRows := strings.Split(box, "\n")
-	boxW := lipgloss.Width(box)
-	top := maxInt((height-len(boxRows))/2, 0)
-	left := maxInt((width-boxW)/2, 0)
-
-	for i, br := range boxRows {
-		y := top + i
-		if y >= len(rows) {
-			break
-		}
-		row := rows[y]
-		// Cut by display cells with x/ansi so styled base rows are not split
-		// mid-escape. The resets stop a colour open in the left part from
-		// bleeding into the box, and the box's from bleeding rightward.
-		leftPart := ansi.Truncate(row, left, "")
-		leftPart += strings.Repeat(" ", left-lipgloss.Width(leftPart))
-		rightPart := ansi.TruncateLeft(row, left+boxW, "")
-		rows[y] = leftPart + ansi.ResetStyle + pad(br, boxW) + ansi.ResetStyle + rightPart
-	}
-	return strings.Join(rows, "\n")
+	// Over the screen, not instead of it (E8): the list being acted on stays.
+	return render.Center(base, box, m.width, m.height)
 }
 
 func (m *Model) renderPicker() string {
 	p := &m.pick
 	w := clampInt(m.width-10, 40, 76)
+	inner := w - 2 // modal padding; a full-width rule used to wrap onto a second line
 	h := m.pickerHeight()
 
 	title := "assign users to " + m.curApp.Label
@@ -430,14 +363,14 @@ func (m *Model) renderPicker() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(m.st.title.Render(truncate(title, w, m.gl.ellipsis)) + "\n")
-	b.WriteString(m.st.filter.Render("/"+p.query) + m.st.dim.Render("▏") + "\n")
-	b.WriteString(m.st.dim.Render(strings.Repeat("─", w)) + "\n")
+	b.WriteString(m.st.title.Render(render.TruncateMarker(title, w, m.gl.ellipsis)) + "\n")
+	b.WriteString(m.st.filter.Render("/") + p.query.View(inner-1, true, m.inputStyle()) + "\n")
+	b.WriteString(m.st.dim.Render(strings.Repeat("─", inner)) + "\n")
 
 	if len(p.matches) == 0 {
 		b.WriteString(m.st.dim.Render("  no match") + "\n")
 	}
-	for i := p.top; i < len(p.matches) && i < p.top+h; i++ {
+	m.listLines(&b, len(p.matches), p.cur, p.top, h, func(i int, sel bool) string {
 		it := p.items[p.matches[i].Index]
 
 		mark := m.gl.uncheck
@@ -451,26 +384,26 @@ func (m *Model) renderPicker() string {
 			desc = it.already
 		}
 		wLabel := clampInt(w/2, 14, 40)
-		line := pad(truncate(label, wLabel, m.gl.ellipsis), wLabel) + " "
+		line := render.PadRight(render.TruncateMarker(label, wLabel, m.gl.ellipsis), wLabel) + " "
 		if it.already != "" {
-			line += m.st.warn.Render(truncate(desc, w-wLabel-6, m.gl.ellipsis))
+			line += m.st.warn.Render(render.TruncateMarker(desc, w-wLabel-6, m.gl.ellipsis))
 		} else {
-			line += m.st.dim.Render(truncate(desc, w-wLabel-6, m.gl.ellipsis))
+			line += m.st.dim.Render(render.TruncateMarker(desc, w-wLabel-6, m.gl.ellipsis))
 		}
 
-		if i == p.cur {
-			b.WriteString(m.st.selected.Render(m.gl.cursor) + mark + " " + line + "\n")
-		} else {
-			b.WriteString("  " + mark + " " + line + "\n")
+		if sel {
+			return m.st.selected.Render(m.gl.cursor) + mark + " " + line
 		}
-	}
+		return "  " + mark + " " + line
+	})
 
-	b.WriteString(m.st.dim.Render(strings.Repeat("─", w)) + "\n")
-	sel := ""
+	b.WriteString(m.st.dim.Render(strings.Repeat("─", inner)) + "\n")
+	// The keys are in the footer below the frame; the box says what is chosen.
+	sel := m.st.dim.Render(fmt.Sprintf("%d match(es)", len(p.matches)))
 	if len(p.chosen) > 0 {
-		sel = m.st.success.Render(fmt.Sprintf("%d selected  ", len(p.chosen)))
+		sel = m.st.success.Render(fmt.Sprintf("%d selected", len(p.chosen)))
 	}
-	b.WriteString(sel + m.st.footer.Render("tab select · enter confirm · esc cancel"))
+	b.WriteString(sel)
 
 	return m.st.modal.Width(w).Render(b.String())
 }
@@ -483,7 +416,7 @@ func (m *Model) renderConfirm() string {
 	if len(m.pending) > 0 {
 		verb = m.pending[0].verb
 	}
-	b.WriteString(m.st.title.Render(verb+" on "+truncate(m.curApp.Label, w-16, m.gl.ellipsis)) + "\n\n")
+	b.WriteString(m.st.title.Render(verb+" on "+render.TruncateMarker(m.curApp.Label, w-16, m.gl.ellipsis)) + "\n\n")
 
 	applicable := 0
 	for _, ch := range m.pending {
@@ -497,7 +430,7 @@ func (m *Model) renderConfirm() string {
 		} else {
 			applicable++
 		}
-		b.WriteString(truncate(line, w, m.gl.ellipsis) + "\n")
+		b.WriteString(render.TruncateMarker(line, w, m.gl.ellipsis) + "\n")
 		if ch.noop != "" {
 			b.WriteString(m.st.dim.Render("    "+wrapIndent(ch.noop, w-4, "    ")) + "\n")
 		}
@@ -508,12 +441,11 @@ func (m *Model) renderConfirm() string {
 
 	b.WriteString("\n")
 	if applicable == 0 {
-		b.WriteString(m.st.dim.Render("nothing to apply · esc to close"))
+		b.WriteString(m.st.dim.Render("nothing to apply  ") + m.footerFor(stackConfirm, w-18))
 		return m.st.modal.Width(w).Render(b.String())
 	}
-	b.WriteString(m.st.footer.Render(
-		fmt.Sprintf("apply %d change(s)?  ", applicable)) +
-		m.st.success.Render("y") + m.st.dim.Render(" / ") + m.st.err.Render("n"))
+	ask := m.st.footer.Render(fmt.Sprintf("apply %d change(s)?  ", applicable))
+	b.WriteString(ask + m.footerFor(stackConfirm, w-lipgloss.Width(ask)))
 
 	style := m.st.modal
 	for _, ch := range m.pending {
@@ -551,45 +483,13 @@ func shortOrg(url string) string {
 	return s
 }
 
-// pad right-pads s to w display cells.
-func pad(s string, w int) string {
-	if d := w - lipgloss.Width(s); d > 0 {
-		return s + strings.Repeat(" ", d)
-	}
-	return s
-}
-
-// padLeft left-pads s to w display cells.
-func padLeft(s string, w int) string {
-	if d := w - lipgloss.Width(s); d > 0 {
-		return strings.Repeat(" ", d) + s
-	}
-	return s
-}
-
 // padBetween places left and right at the edges of a w-cell line.
 func padBetween(left, right string, w int) string {
 	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
-		return truncate(left, w, "…")
+		return render.Truncate(left, w)
 	}
 	return left + strings.Repeat(" ", gap) + right
-}
-
-// truncate cuts s to w display cells, appending the ellipsis glyph. Callers
-// pass styled strings, so the cut must skip escape sequences: walking runes
-// split SGR codes and let a color bleed into the next line.
-func truncate(s string, w int, ellipsis string) string {
-	if w <= 0 {
-		return ""
-	}
-	if lipgloss.Width(s) <= w {
-		return s
-	}
-	if w <= lipgloss.Width(ellipsis) {
-		return ""
-	}
-	return ansi.Truncate(s, w, ellipsis)
 }
 
 // fillHeight pads a block to exactly n lines so the footer never shifts as

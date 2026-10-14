@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	okxapp "github.com/keyolk/okx/internal/app"
-	"github.com/keyolk/okx/internal/fuzzy"
+	"github.com/keyolk/tuikit/fuzzy"
 )
 
 // Shell completion runs on every Tab press, so it must never block on the
@@ -34,7 +34,7 @@ func rank(candidates []string, prefix string) []string {
 		}
 		return candidates
 	}
-	matches := fuzzy.Filter(candidates, prefix)
+	matches := fuzzy.Filter(candidates, strings.ToLower(prefix))
 	out := make([]string, 0, len(matches))
 	for i, m := range matches {
 		if i >= maxCompletions {

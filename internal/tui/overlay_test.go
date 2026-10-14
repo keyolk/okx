@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/keyolk/tuikit/render"
 )
 
 // A modal is drawn over the screen it belongs to. It used to be placed on a
@@ -35,9 +37,11 @@ func TestOverlayKeepsBaseVisible(t *testing.T) {
 	}
 }
 
-func TestSpliceCenterPreservesSurroundingCells(t *testing.T) {
+// The overlay is the kit's render.Center now; this pins the behaviour okx
+// relied on when it had its own splice.
+func TestCenterPreservesSurroundingCells(t *testing.T) {
 	base := strings.Join([]string{"aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"}, "\n")
-	got := spliceCenter(base, "XX", 10, 3)
+	got := render.Center(base, "XX", 10, 3)
 	lines := strings.Split(got, "\n")
 	if lines[0] != "aaaaaaaaaa" || lines[2] != "cccccccccc" {
 		t.Fatalf("rows outside the box changed: %q", lines)
@@ -47,4 +51,4 @@ func TestSpliceCenterPreservesSurroundingCells(t *testing.T) {
 	}
 }
 
-func stripReset(s string) string { return strings.ReplaceAll(s, "\x1b[m", "") }
+func stripReset(s string) string { return ansi.Strip(s) }

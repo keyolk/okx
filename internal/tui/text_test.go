@@ -5,30 +5,23 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 )
 
-// truncate is applied to whole styled lines. It must cut by display cells and
-// keep escape sequences intact, never leaving half an SGR code behind.
-func TestTruncateKeepsEscapeSequencesIntact(t *testing.T) {
-	styled := "\x1b[31mred text here\x1b[0m and plain"
-	got := truncate(styled, 8, "…")
-	if w := lipgloss.Width(got); w != 8 {
-		t.Fatalf("width = %d, want 8: %q", w, got)
-	}
-	if ansi.Strip(got) != "red tex…" {
-		t.Fatalf("visible text = %q, want %q", ansi.Strip(got), "red tex…")
-	}
-	// Stripping must leave no ESC: a broken sequence would survive Strip.
-	if strings.ContainsRune(ansi.Strip(got), '\x1b') {
-		t.Fatalf("truncate split an escape sequence: %q", got)
-	}
-}
-
-func TestTruncateCountsWideRunes(t *testing.T) {
-	got := truncate("가나다라마바사", 7, "…")
-	if w := lipgloss.Width(got); w > 7 {
-		t.Fatalf("width = %d > 7: %q", w, got)
+// The truncation marker follows the locale: `…` draws two cells under a CJK
+// locale, so every cut line would overflow by one there.
+func TestEllipsisFollowsTheLocale(t *testing.T) {
+	for _, tc := range []struct{ lang, want string }{
+		{"en_US.UTF-8", "…"},
+		{"ko_KR.UTF-8", "~"},
+		{"C", "..."},
+	} {
+		t.Setenv("LC_ALL", "")
+		t.Setenv("LC_CTYPE", "")
+		t.Setenv("LANG", tc.lang)
+		t.Setenv("OKX_ASCII", "")
+		if got := detectGlyphs().ellipsis; got != tc.want {
+			t.Errorf("LANG=%s: ellipsis = %q, want %q", tc.lang, got, tc.want)
+		}
 	}
 }
 

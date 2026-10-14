@@ -4,56 +4,32 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/prefs"
 
 	"github.com/keyolk/okx/internal/okta"
 )
 
-// isQuit reports whether a returned command is tea.Quit, by running it and
-// checking for the QuitMsg. tea.Quit is a plain func, so it cannot be compared
-// directly.
-func isQuit(cmd tea.Cmd) bool {
-	if cmd == nil {
-		return false
-	}
-	_, ok := cmd().(tea.QuitMsg)
-	return ok
-}
-
-func TestNormalizeCJKKeyMapsJamoByPhysicalPosition(t *testing.T) {
-	for jamo, want := range map[string]string{
-		"ㅂ": "q", "ㅁ": "a", "ㅋ": "z", "ㅓ": "j", "ㅏ": "k",
-		"ㅃ": "Q", "ㄲ": "R",
-	} {
-		if got := normalizeCJKKey(keyMsg(jamo)).String(); got != want {
-			t.Errorf("normalizeCJKKey(%q) = %q, want %q", jamo, got, want)
+// isQuit reports whether a command ends the program. Quit flushes the UI
+// state first and exits on the final prefs.Saved, so follow that one hop
+// through the model, as Bubble Tea would.
+func isQuit(m *Model, cmd tea.Cmd) bool {
+	for range 2 {
+		if cmd == nil {
+			return false
 		}
-	}
-}
-
-func TestNormalizeCJKKeyLeavesEverythingElseAlone(t *testing.T) {
-	// Latin keys, digits, and composed syllables pass through: a composed
-	// syllable only reaches the TUI as committed text, never as a shortcut.
-	for _, k := range []string{"q", "R", "0", "가"} {
-		if got := normalizeCJKKey(keyMsg(k)).String(); got != k {
-			t.Errorf("normalizeCJKKey(%q) = %q, want it unchanged", k, got)
+		msg := cmd()
+		if _, ok := msg.(tea.QuitMsg); ok {
+			return true
 		}
-	}
-	for _, in := range []tea.KeyMsg{{Type: tea.KeyEnter}, {Type: tea.KeyCtrlC}, {Type: tea.KeyEsc}} {
-		if got := normalizeCJKKey(in); got.String() != in.String() {
-			t.Errorf("normalizeCJKKey(%q) = %q, want it unchanged", in.String(), got.String())
+		if _, ok := msg.(prefs.Saved); !ok {
+			return false
 		}
+		// Tests call handleKey directly, which leaves the save ticks Update
+		// would have batched; drop them so Update returns the quit alone.
+		m.queued = nil
+		_, cmd = m.Update(msg)
 	}
-}
-
-func TestNormalizeCJKKeyLeavesPasteAndAltAlone(t *testing.T) {
-	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'ㅂ'}, Paste: true}
-	if got := normalizeCJKKey(paste); got.String() != paste.String() {
-		t.Errorf("pasted jamo was rewritten to %q", got.String())
-	}
-	alt := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'ㅂ'}, Alt: true}
-	if got := normalizeCJKKey(alt); got.String() != alt.String() {
-		t.Errorf("alt chord was rewritten to %q", got.String())
-	}
+	return false
 }
 
 // --- through the real dispatcher --------------------------------------------
@@ -94,7 +70,7 @@ func TestHangulQuitsLikeLatinQ(t *testing.T) {
 	m := topLevelTestModel()
 	m.screen = screenApps // top level: q quits rather than backing out
 	_, cmd := m.handleKey(keyMsg("ㅂ"))
-	if !isQuit(cmd) {
+	if !isQuit(m, cmd) {
 		t.Fatal("ㅂ (physical q) did not quit")
 	}
 }
@@ -117,8 +93,8 @@ func TestTextInputsKeepHangulVerbatim(t *testing.T) {
 		m.overlay = overlayPickGroup
 		m.pick = pickerState{chosen: map[string]bool{}}
 		m.handleKey(keyMsg("ㅁ"))
-		if m.pick.query != "ㅁ" {
-			t.Fatalf("picker query = %q, want the jamo verbatim", m.pick.query)
+		if m.pick.query.Value() != "ㅁ" {
+			t.Fatalf("picker query = %q, want the jamo verbatim", m.pick.query.Value())
 		}
 	})
 }
@@ -144,7 +120,7 @@ func TestCtrlCQuitsFromEveryState(t *testing.T) {
 			m := topLevelTestModel()
 			tc.setup(m)
 			_, cmd := m.handleKey(keyMsg("ctrl+c"))
-			if !isQuit(cmd) {
+			if !isQuit(m, cmd) {
 				t.Fatalf("ctrl+c did not quit from %s", tc.name)
 			}
 		})
@@ -156,10 +132,32 @@ func TestEscStillBacksOutWithoutQuitting(t *testing.T) {
 	m := topLevelTestModel()
 	m.overlay = overlayPickGroup
 	_, cmd := m.handleKey(keyMsg("esc"))
-	if isQuit(cmd) {
+	if isQuit(m, cmd) {
 		t.Fatal("esc quit the program; it should only close the picker")
 	}
 	if m.overlay != overlayNone {
 		t.Fatal("esc did not close the picker")
+	}
+}
+
+// Text fields are input.Field: the cursor moves, typing inserts at it, and a
+// paste arrives whole. The hand-written field only appended and chopped.
+func TestTextFieldsEditAtTheCursor(t *testing.T) {
+	m := topLevelTestModel()
+	m.screen = screenApps
+	m.handleKey(keyMsg("/"))
+	for _, k := range []string{"a", "c", "left", "b"} {
+		m.handleKey(keyMsgFor(t, k))
+	}
+	if m.appFiltr != "abc" {
+		t.Fatalf("filter after a c ← b = %q, want abc", m.appFiltr)
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x\ny"), Paste: true})
+	if m.appFiltr != "abx yc" {
+		t.Fatalf("filter after a paste = %q, want abx yc", m.appFiltr)
+	}
+	m.handleKey(keyMsgFor(t, "backspace"))
+	if m.appFiltr != "abx c" {
+		t.Fatalf("backspace = %q, want abx c (delete before the cursor)", m.appFiltr)
 	}
 }

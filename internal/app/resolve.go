@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/keyolk/okx/internal/cache"
-	"github.com/keyolk/okx/internal/fuzzy"
 	"github.com/keyolk/okx/internal/okta"
+	"github.com/keyolk/tuikit/fuzzy"
 )
 
 // AmbiguousError reports that a query matched several candidates. Commands
@@ -67,7 +67,10 @@ func resolve[T any](kind, query string, items []T, id func(T) string, names func
 		return zero, ambiguous(kind, query, exact, id, names)
 	}
 
-	// Fuzzy: score each item by its best-scoring name.
+	// Fuzzy: score each item by its best-scoring name. The pattern is
+	// lowercased so the kit scorer's smart case stays off: a CLI argument
+	// "Github" must still resolve "GitHub", as it did before the kit.
+	lowerQuery := strings.ToLower(query)
 	type scored struct {
 		item  T
 		score int
@@ -77,7 +80,7 @@ func resolve[T any](kind, query string, items []T, id func(T) string, names func
 		best := 0
 		matched := false
 		for _, n := range names(it) {
-			if s, _, ok := fuzzy.Score(n, query); ok && (!matched || s > best) {
+			if s, _, ok := fuzzy.Score(n, lowerQuery); ok && (!matched || s > best) {
 				best, matched = s, true
 			}
 		}

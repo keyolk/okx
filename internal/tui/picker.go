@@ -7,16 +7,20 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/keyolk/tuikit/input"
+	"github.com/keyolk/tuikit/render"
+	"github.com/keyolk/tuikit/toast"
+
 	"github.com/keyolk/okx/internal/cache"
-	"github.com/keyolk/okx/internal/fuzzy"
 	"github.com/keyolk/okx/internal/okta"
+	"github.com/keyolk/tuikit/fuzzy"
 )
 
 // pickerState drives the assign overlay: a fuzzy-filtered, multi-select list
 // of users or groups not yet assigned to the current app.
 type pickerState struct {
 	kind    string // "user" or "group"
-	query   string
+	query   input.Field
 	items   []pickItem
 	matches []fuzzy.Match
 	cur     int
@@ -83,10 +87,10 @@ func (p *pickerState) refilter() {
 	}
 	// Match against the description too, so "Gavin" finds gavin.jeong@… even
 	// when the login is an initials-style address.
-	if p.query != "" {
+	if q := p.query.Value(); q != "" {
 		p.matches = p.matches[:0]
 		seen := map[int]bool{}
-		for _, m := range fuzzy.Filter(labels, p.query) {
+		for _, m := range caseless(labels, q) {
 			p.matches = append(p.matches, m)
 			seen[m.Index] = true
 		}
@@ -94,7 +98,7 @@ func (p *pickerState) refilter() {
 		for i, it := range p.items {
 			descs[i] = it.desc
 		}
-		for _, m := range fuzzy.Filter(descs, p.query) {
+		for _, m := range caseless(descs, q) {
 			if !seen[m.Index] && p.items[m.Index].desc != "" {
 				// Description hits rank below label hits.
 				m.Score -= 64
@@ -124,53 +128,32 @@ func (p *pickerState) selected() (pickItem, bool) {
 	return p.items[p.matches[p.cur].Index], true
 }
 
-func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-
-	switch m.overlay {
-	case overlayError:
-		if key == "esc" || key == "enter" || key == "q" {
-			m.overlay = overlayNone
-			m.errText = ""
+// confirmApply applies the pending change set. confirm.enter reaches here
+// only when the set removes nothing (keyEnabled); y always does.
+func (m *Model) confirmApply() tea.Cmd {
+	pending := m.pending
+	m.pending = nil
+	m.overlay = overlayNone
+	applicable := 0
+	for _, ch := range pending {
+		if ch.noop == "" {
+			applicable++
 		}
-		return m, nil
-
-	case overlayConfirm:
-		// enter is the key that opened this modal from the list and the picker,
-		// so a double-tap would confirm a removal unseen. Removals take y only.
-		if key == "enter" && pendingRemoves(m.pending) {
-			return m, nil
-		}
-		switch key {
-		case "y", "Y", "enter":
-			pending := m.pending
-			m.pending = nil
-			m.overlay = overlayNone
-			applicable := 0
-			for _, ch := range pending {
-				if ch.noop == "" {
-					applicable++
-				}
-			}
-			if applicable == 0 {
-				m.setStatus("nothing to do", false)
-				return m, nil
-			}
-			m.busyKind = busyApply
-			m.busyLabel = fmt.Sprintf("applying %d change(s)", applicable)
-			m.status = ""
-			return m, m.applyCmd(pending, m.curApp.ID)
-		case "n", "N", "esc", "q":
-			m.pending = nil
-			m.overlay = overlayNone
-			m.setStatus("aborted", false)
-		}
-		return m, nil
-
-	case overlayPickUser, overlayPickGroup:
-		return m.handlePickerKey(msg)
 	}
-	return m, nil
+	if applicable == 0 {
+		m.notify("apply", "nothing to do", toast.Info)
+		return nil
+	}
+	m.busyKind = busyApply
+	m.busyLabel = fmt.Sprintf("applying %d change(s)", applicable)
+	m.toasts = toast.Dismiss(m.toasts, "apply")
+	return m.applyCmd(pending, m.curApp.ID)
+}
+
+func (m *Model) confirmCancel() {
+	m.pending = nil
+	m.overlay = overlayNone
+	m.notify("apply", "aborted", toast.Info)
 }
 
 // pendingRemoves reports whether confirming would actually unassign anything.
@@ -183,68 +166,30 @@ func pendingRemoves(pending []plannedChange) bool {
 	return false
 }
 
-func (m *Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// movePicker moves the picker cursor by delta, clamped to the matches.
+func (m *Model) movePicker(delta int) {
 	p := &m.pick
-	h := m.pickerHeight()
+	p.cur = max(0, min(p.cur+delta, len(p.matches)-1))
+	_, _, p.top = render.Window(len(p.matches), m.pickerRows(), p.cur, p.top)
+}
 
-	switch msg.String() {
-	case "esc":
-		m.overlay = overlayNone
-		return m, nil
-	case "down", "ctrl+n":
-		p.cur++
-	case "up", "ctrl+p":
-		p.cur--
-	case "pgdown":
-		p.cur += h / 2
-	case "pgup":
-		p.cur -= h / 2
-	case "tab":
-		// Toggle without moving: multi-select is the point of this overlay.
-		if it, ok := p.selected(); ok {
-			if p.chosen[it.id] {
-				delete(p.chosen, it.id)
-			} else {
-				p.chosen[it.id] = true
-			}
-		}
-	case "enter":
-		return m.commitPicker()
-	case "backspace":
-		if r := []rune(p.query); len(r) > 0 {
-			p.query = string(r[:len(r)-1])
-			p.refilter()
-		}
-	case "ctrl+u":
-		p.query = ""
-		p.refilter()
-	default:
-		if msg.Type == tea.KeyRunes {
-			p.query += string(msg.Runes)
-			p.refilter()
-		} else if msg.String() == " " {
-			p.query += " "
-			p.refilter()
+// togglePicked selects or unselects the row under the cursor without moving:
+// multi-select is the point of this overlay.
+func (m *Model) togglePicked() {
+	p := &m.pick
+	if it, ok := p.selected(); ok {
+		if p.chosen[it.id] {
+			delete(p.chosen, it.id)
+		} else {
+			p.chosen[it.id] = true
 		}
 	}
-
-	if p.cur < 0 {
-		p.cur = 0
-	}
-	if p.cur >= len(p.matches) {
-		p.cur = len(p.matches) - 1
-	}
-	if p.cur < 0 {
-		p.cur = 0
-	}
-	p.top = scrollTo(p.top, p.cur, h)
-	return m, nil
 }
 
 // commitPicker turns the picker selection into a pending change set and hands
 // off to the confirm modal. Enter with nothing toggled uses the row under the
 // cursor, which is what a single-target assign should take.
-func (m *Model) commitPicker() (tea.Model, tea.Cmd) {
+func (m *Model) commitPicker() {
 	p := &m.pick
 	var targets []pickItem
 	if len(p.chosen) > 0 {
@@ -258,7 +203,7 @@ func (m *Model) commitPicker() (tea.Model, tea.Cmd) {
 	}
 	if len(targets) == 0 {
 		m.overlay = overlayNone
-		return m, nil
+		return
 	}
 
 	var changes []plannedChange
@@ -276,7 +221,13 @@ func (m *Model) commitPicker() (tea.Model, tea.Cmd) {
 	}
 	m.pending = changes
 	m.overlay = overlayConfirm
-	return m, nil
+	return
+}
+
+// pickerRows is how many matches the picker draws: pickerHeight minus the
+// two ↑/↓ more lines when the matches do not all fit.
+func (m *Model) pickerRows() int {
+	return windowRows(len(m.pick.matches), m.pickerHeight())
 }
 
 func (m *Model) pickerHeight() int {
@@ -313,7 +264,7 @@ func (m *Model) filteredTopGroups() []okta.Group {
 	for i, g := range m.groups {
 		hay[i] = g.Profile.Name + " " + g.Profile.Description + " " + g.ID
 	}
-	matches := fuzzy.Filter(hay, m.groupFiltr)
+	matches := caseless(hay, m.groupFiltr)
 	out := make([]okta.Group, 0, len(matches))
 	for _, match := range matches {
 		out = append(out, m.groups[match.Index])
@@ -329,7 +280,7 @@ func (m *Model) filteredTopUsers() []okta.User {
 	for i, u := range m.users {
 		hay[i] = u.Profile.Login + " " + u.Profile.Email + " " + u.Name() + " " + u.ID
 	}
-	matches := fuzzy.Filter(hay, m.userFiltr)
+	matches := caseless(hay, m.userFiltr)
 	out := make([]okta.User, 0, len(matches))
 	for _, match := range matches {
 		out = append(out, m.users[match.Index])
@@ -355,7 +306,7 @@ func (m *Model) filteredAssignments() []cache.Assignment {
 		}
 		hay[i] = b.String()
 	}
-	matches := fuzzy.Filter(hay, m.asgFiltr)
+	matches := caseless(hay, m.asgFiltr)
 	out := make([]cache.Assignment, 0, len(matches))
 	for _, mt := range matches {
 		out = append(out, m.assignments[mt.Index])
@@ -371,7 +322,7 @@ func (m *Model) filteredGroups() []groupRow {
 	for i, g := range m.appGroups {
 		names[i] = g.group.Profile.Name
 	}
-	matches := fuzzy.Filter(names, m.asgFiltr)
+	matches := caseless(names, m.asgFiltr)
 	out := make([]groupRow, 0, len(matches))
 	for _, mt := range matches {
 		out = append(out, m.appGroups[mt.Index])
@@ -379,4 +330,10 @@ func (m *Model) filteredGroups() []groupRow {
 	return out
 }
 
-var _ = okta.Group{}
+// caseless ranks hay against a filter the user typed. The kit scorer is
+// smart-case (an uppercase rune makes it case-sensitive); okx's filters were
+// always case-insensitive, and the apps filter goes through app.AppMatches,
+// which lowercases too, so every list lowercases the pattern to stay alike.
+func caseless(hay []string, query string) []fuzzy.Match {
+	return fuzzy.Filter(hay, strings.ToLower(query))
+}
