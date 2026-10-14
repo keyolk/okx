@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/keyolk/tuikit/chart"
 	"github.com/keyolk/tuikit/render"
 	"github.com/keyolk/tuikit/toast"
 
@@ -153,15 +154,22 @@ func (m *Model) renderProgress() string {
 	return render.TruncateMarker(strings.Join(parts, "  "), m.width, m.gl.ellipsis)
 }
 
+// progressBarWidth is the bar plus its " 42%" suffix, the same 17 cells the
+// footer has always given it.
+const progressBarWidth = 17
+
 // progressBar renders the current stage's completion. Stages that report no
-// total (a single list call) get no bar rather than a fake one.
+// total (a single list call) get no bar rather than a fake one. It is a plain
+// Bar, not a Meter: a nearly finished fetch is good news, and Meter's
+// 75%/90% warn/error bands would paint it as a problem.
 func (m *Model) progressBar() string {
 	if m.prog.total <= 0 {
 		return ""
 	}
-	pct := 100 * m.prog.done / m.prog.total
-	return m.st.info.Render(m.gl.kit.Bar(float64(m.prog.done)/float64(m.prog.total), 12)) +
-		m.st.dim.Render(fmt.Sprintf(" %3d%%", pct))
+	return chart.Bar(float64(m.prog.done)/float64(m.prog.total), progressBarWidth, chart.BarOpts{
+		Look:    chart.Look{Glyphs: m.gl.chart, Styles: chart.Styles{Line: m.st.info, Muted: m.st.dim}},
+		Percent: true,
+	})
 }
 
 // renderLoadingBody replaces an empty list while the first snapshot loads, so

@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/keyolk/tuikit/chart"
 	"github.com/keyolk/tuikit/render"
 	"github.com/keyolk/tuikit/theme"
 )
@@ -86,22 +87,27 @@ type glyphSet struct {
 	// the Unicode one is render.Ellipsis(), `~` under a CJK locale where `…`
 	// draws two cells and every cut line would overflow by one.
 	ellipsis string
-	// kit draws the spinner and the progress bar (SpinnerFrame, Bar). The
-	// rest of okx's set stays its own: its ASCII marks are three cells
-	// ("[x]"), the kit's one, and the picker columns are laid out for them.
+	// kit draws the spinner (SpinnerFrame). The rest of okx's set stays its
+	// own: its ASCII marks are three cells ("[x]"), the kit's one, and the
+	// picker columns are laid out for them.
 	kit theme.Glyphs
+	// chart draws the progress bar (chart.Bar). It is chosen separately from
+	// kit because the Unicode bar is block elements, which are East Asian
+	// Ambiguous: under a CJK locale they draw two cells and the footer would
+	// overflow, so that locale gets the ASCII bar even with Unicode marks.
+	chart chart.Glyphs
 }
 
 var unicodeGlyphs = glyphSet{
 	check: "◉", uncheck: "○", cursor: "▸", bullet: "·",
 	plus: "+", minus: "−", ok: "✓", fail: "✗", ellipsis: "…",
-	kit: theme.Unicode(),
+	kit: theme.Unicode(), chart: chart.Unicode(),
 }
 
 var asciiGlyphs = glyphSet{
 	check: "[x]", uncheck: "[ ]", cursor: ">", bullet: "-",
 	plus: "+", minus: "-", ok: "ok", fail: "!!", ellipsis: "...",
-	kit: theme.ASCII(),
+	kit: theme.ASCII(), chart: chart.ASCII(),
 }
 
 func detectGlyphs() glyphSet {
@@ -113,6 +119,9 @@ func detectGlyphs() glyphSet {
 			if containsUTF8(v) {
 				g := unicodeGlyphs
 				g.ellipsis = render.Ellipsis()
+				if render.CJKLocale() {
+					g.chart = chart.ASCII()
+				}
 				return g
 			}
 			return asciiGlyphs
