@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyolk/tuikit/render"
+
 	"github.com/keyolk/okx/internal/cache"
 )
 
@@ -103,6 +105,54 @@ func TestProgressBarOmittedWithoutTotal(t *testing.T) {
 	model.prog = progressState{stage: cache.StageApps, active: true}
 	if bar := model.progressBar(); bar != "" {
 		t.Errorf("progressBar() = %q for a stage with no total, want empty", bar)
+	}
+}
+
+// The bar keeps the footer's 17 cells, reads full only when the stage is done
+// (199/200 must not look finished), and is 7-bit under the ASCII set.
+func TestProgressBarWidthAndFill(t *testing.T) {
+	for _, gl := range []glyphSet{unicodeGlyphs, asciiGlyphs} {
+		model := topLevelTestModel()
+		model.gl = gl
+		for _, tc := range []struct {
+			done, total int
+			full        bool
+		}{{0, 20, false}, {7, 20, false}, {199, 200, false}, {20, 20, true}} {
+			model.prog = progressState{stage: cache.StageAssignments, done: tc.done, total: tc.total, active: true}
+			bar := model.progressBar()
+			if w := render.Width(bar); w != progressBarWidth {
+				t.Errorf("%d/%d: bar %q is %d cells, want %d", tc.done, tc.total, bar, w, progressBarWidth)
+			}
+			if got := strings.Contains(bar, "100%"); got != tc.full {
+				t.Errorf("%d/%d: bar %q full = %v, want %v", tc.done, tc.total, bar, got, tc.full)
+			}
+			if gl.chart.ASCII {
+				for _, r := range bar {
+					if r > 0x7e {
+						t.Errorf("ASCII bar %q contains %q", bar, r)
+						break
+					}
+				}
+			}
+		}
+	}
+}
+
+// Block elements are East Asian Ambiguous: under a CJK locale they draw two
+// cells, so the bar falls back to ASCII even though okx keeps its Unicode marks.
+func TestProgressBarGlyphsFollowTheLocale(t *testing.T) {
+	for _, tc := range []struct {
+		lang  string
+		ascii bool
+	}{{"en_US.UTF-8", false}, {"ko_KR.UTF-8", true}, {"C", true}} {
+		t.Setenv("LC_ALL", "")
+		t.Setenv("LC_CTYPE", "")
+		t.Setenv("LANG", tc.lang)
+		t.Setenv("OKX_ASCII", "")
+		t.Setenv("RUNEWIDTH_EASTASIAN", "")
+		if got := detectGlyphs().chart.ASCII; got != tc.ascii {
+			t.Errorf("LANG=%s: chart ASCII = %v, want %v", tc.lang, got, tc.ascii)
+		}
 	}
 }
 
