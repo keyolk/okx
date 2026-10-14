@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/keyolk/tuikit/input"
 	"github.com/keyolk/tuikit/render"
 	"github.com/keyolk/tuikit/toast"
 
@@ -19,7 +20,7 @@ import (
 // of users or groups not yet assigned to the current app.
 type pickerState struct {
 	kind    string // "user" or "group"
-	query   string
+	query   input.Field
 	items   []pickItem
 	matches []fuzzy.Match
 	cur     int
@@ -86,10 +87,10 @@ func (p *pickerState) refilter() {
 	}
 	// Match against the description too, so "Gavin" finds gavin.jeong@… even
 	// when the login is an initials-style address.
-	if p.query != "" {
+	if q := p.query.Value(); q != "" {
 		p.matches = p.matches[:0]
 		seen := map[int]bool{}
-		for _, m := range caseless(labels, p.query) {
+		for _, m := range caseless(labels, q) {
 			p.matches = append(p.matches, m)
 			seen[m.Index] = true
 		}
@@ -97,7 +98,7 @@ func (p *pickerState) refilter() {
 		for i, it := range p.items {
 			descs[i] = it.desc
 		}
-		for _, m := range caseless(descs, p.query) {
+		for _, m := range caseless(descs, q) {
 			if !seen[m.Index] && p.items[m.Index].desc != "" {
 				// Description hits rank below label hits.
 				m.Score -= 64

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/input"
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/render"
 )
@@ -15,7 +16,7 @@ import (
 // runs through the same run() as its key.
 
 type paletteState struct {
-	query string
+	query input.Field
 	stack []keys.Ctx // the screen the palette was opened over
 	all   []keys.Entry
 	shown []keys.Entry
@@ -35,7 +36,7 @@ func (m *Model) openPalette() {
 }
 
 func (p *paletteState) refilter() {
-	p.shown = keys.Filter(p.all, p.query)
+	p.shown = keys.Filter(p.all, p.query.Value())
 	p.cur, p.top = 0, 0
 }
 
@@ -67,7 +68,7 @@ func (m *Model) renderPalette() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.title.Render("command palette") + "\n")
-	b.WriteString(m.st.filter.Render(":"+p.query) + m.st.dim.Render("▏") + "\n")
+	b.WriteString(m.st.filter.Render(":") + p.query.View(inner-1, true, m.inputStyle()) + "\n")
 	b.WriteString(m.st.dim.Render(strings.Repeat("─", inner)) + "\n")
 
 	if len(p.shown) == 0 {

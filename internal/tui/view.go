@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/keyolk/tuikit/input"
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/render"
 	"github.com/keyolk/tuikit/toast"
@@ -113,8 +114,8 @@ func (m *Model) renderFooter() string {
 	var status string
 	switch {
 	case m.filtering:
-		if target, ok := m.currentFilter(); ok {
-			status = m.st.filter.Render("/" + *target + "▏")
+		if f, ok := m.filterInput(); ok {
+			status = m.st.filter.Render("/") + f.View(m.width-1, true, m.inputStyle())
 		}
 	case m.busyKind != busyNone:
 		status = m.renderProgress()
@@ -133,6 +134,12 @@ func (m *Model) renderFooter() string {
 // table: what it shows is exactly what the keys do there.
 func (m *Model) footerFor(stack []keys.Ctx, width int) string {
 	return m.km.Or(defaultKeymap()).Footer(stack, width, m.keyOpts(), m.footerStyle())
+}
+
+// inputStyle draws every text field: the filter, the picker query and the
+// palette query.
+func (m *Model) inputStyle() input.Style {
+	return input.Style{Text: m.st.filter, Placeholder: m.st.dim}
 }
 
 func (m *Model) toastStyles() toast.Styles {
@@ -357,7 +364,7 @@ func (m *Model) renderPicker() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.title.Render(render.TruncateMarker(title, w, m.gl.ellipsis)) + "\n")
-	b.WriteString(m.st.filter.Render("/"+p.query) + m.st.dim.Render("▏") + "\n")
+	b.WriteString(m.st.filter.Render("/") + p.query.View(inner-1, true, m.inputStyle()) + "\n")
 	b.WriteString(m.st.dim.Render(strings.Repeat("─", inner)) + "\n")
 
 	if len(p.matches) == 0 {

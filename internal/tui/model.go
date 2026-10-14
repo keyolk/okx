@@ -16,6 +16,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/input"
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/prefs"
 	"github.com/keyolk/tuikit/toast"
@@ -124,7 +125,11 @@ type Model struct {
 	pending []plannedChange
 
 	filtering bool
-	errText   string
+	// filterField adds a cursor to the list filter being typed. The filter
+	// strings (appFiltr…) stay the state — saved, restored, read by every
+	// list — and filterInput rebuilds the field whenever they disagree.
+	filterField input.Field
+	errText     string
 
 	// km is the one binding table (keys.go). By value: the zero Keymap is
 	// safe, and tests that build a Model literal fall back to the defaults.

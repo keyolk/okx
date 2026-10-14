@@ -2,6 +2,7 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/input"
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/render"
 	"github.com/keyolk/tuikit/toast"
@@ -31,7 +32,12 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if !ok {
 		if m.isInTextInput() {
-			m.typeText(msg)
+			// Typing, pastes, cursor moves and word deletes: input.Field
+			// takes every key the table does not claim.
+			m.editText(func(f input.Field) input.Field {
+				f, _ = f.Update(msg)
+				return f
+			})
 		}
 		return m, nil
 	}
@@ -144,16 +150,16 @@ func (m *Model) run(action string) tea.Cmd {
 		m.saveUI()
 	case "filter.cancel":
 		m.filtering = false
-		m.editFilter(func(string) string { return "" })
+		m.editFilter(func(input.Field) input.Field { return input.Field{} })
 	case "edit.delete":
-		m.editText(func(s string) string {
-			if r := []rune(s); len(r) > 0 {
-				return string(r[:len(r)-1])
-			}
-			return s
+		// Through the field, so a rebound key deletes before the cursor
+		// exactly as backspace does.
+		m.editText(func(f input.Field) input.Field {
+			f, _ = f.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+			return f
 		})
 	case "edit.clear":
-		m.editText(func(string) string { return "" })
+		m.editText(func(input.Field) input.Field { return input.Field{} })
 
 	case "query.down":
 		m.moveQuery(1)
@@ -198,29 +204,20 @@ func (m *Model) quit() tea.Cmd {
 	return cmd
 }
 
-// typeText appends a typed key to whichever text field owns the keyboard.
-func (m *Model) typeText(msg tea.KeyMsg) {
-	var s string
-	switch {
-	case msg.Type == tea.KeyRunes:
-		s = string(msg.Runes)
-	case msg.Type == tea.KeySpace:
-		s = " "
-	default:
-		return
-	}
-	m.editText(func(t string) string { return t + s })
-}
-
-// editText applies f to the active text field and refilters it.
-func (m *Model) editText(f func(string) string) {
+// editText applies f to the text field that owns the keyboard and refilters
+// when the text changed; a cursor move leaves the list where it is.
+func (m *Model) editText(f func(input.Field) input.Field) {
 	switch m.overlay {
 	case overlayPickUser, overlayPickGroup:
-		m.pick.query = f(m.pick.query)
-		m.pick.refilter()
+		old := m.pick.query.Value()
+		if m.pick.query = f(m.pick.query); m.pick.query.Value() != old {
+			m.pick.refilter()
+		}
 	case overlayPalette:
-		m.pal.query = f(m.pal.query)
-		m.pal.refilter()
+		old := m.pal.query.Value()
+		if m.pal.query = f(m.pal.query); m.pal.query.Value() != old {
+			m.pal.refilter()
+		}
 	case overlayNone:
 		if m.filtering {
 			m.editFilter(f)
@@ -228,15 +225,33 @@ func (m *Model) editText(f func(string) string) {
 	}
 }
 
-func (m *Model) editFilter(f func(string) string) {
+// filterInput is the field for the current screen's filter, rebuilt from
+// the filter string when the two disagree (another screen's filter, a
+// restored ui.json, a refresh).
+func (m *Model) filterInput() (input.Field, bool) {
 	target, ok := m.currentFilter()
+	if !ok {
+		return input.Field{}, false
+	}
+	if m.filterField.Value() != *target {
+		return input.New(*target), true
+	}
+	return m.filterField, true
+}
+
+func (m *Model) editFilter(f func(input.Field) input.Field) {
+	field, ok := m.filterInput()
 	if !ok {
 		m.filtering = false
 		return
 	}
-	*target = f(*target)
-	m.resetCurrentCursor()
-	m.saveUI()
+	target, _ := m.currentFilter()
+	m.filterField = f(field)
+	if v := m.filterField.Value(); v != *target {
+		*target = v
+		m.resetCurrentCursor()
+		m.saveUI()
+	}
 }
 
 func (m *Model) moveQuery(delta int) {

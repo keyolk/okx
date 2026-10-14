@@ -93,8 +93,8 @@ func TestTextInputsKeepHangulVerbatim(t *testing.T) {
 		m.overlay = overlayPickGroup
 		m.pick = pickerState{chosen: map[string]bool{}}
 		m.handleKey(keyMsg("ㅁ"))
-		if m.pick.query != "ㅁ" {
-			t.Fatalf("picker query = %q, want the jamo verbatim", m.pick.query)
+		if m.pick.query.Value() != "ㅁ" {
+			t.Fatalf("picker query = %q, want the jamo verbatim", m.pick.query.Value())
 		}
 	})
 }
@@ -137,5 +137,27 @@ func TestEscStillBacksOutWithoutQuitting(t *testing.T) {
 	}
 	if m.overlay != overlayNone {
 		t.Fatal("esc did not close the picker")
+	}
+}
+
+// Text fields are input.Field: the cursor moves, typing inserts at it, and a
+// paste arrives whole. The hand-written field only appended and chopped.
+func TestTextFieldsEditAtTheCursor(t *testing.T) {
+	m := topLevelTestModel()
+	m.screen = screenApps
+	m.handleKey(keyMsg("/"))
+	for _, k := range []string{"a", "c", "left", "b"} {
+		m.handleKey(keyMsgFor(t, k))
+	}
+	if m.appFiltr != "abc" {
+		t.Fatalf("filter after a c ← b = %q, want abc", m.appFiltr)
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x\ny"), Paste: true})
+	if m.appFiltr != "abx yc" {
+		t.Fatalf("filter after a paste = %q, want abx yc", m.appFiltr)
+	}
+	m.handleKey(keyMsgFor(t, "backspace"))
+	if m.appFiltr != "abx c" {
+		t.Fatalf("backspace = %q, want abx c (delete before the cursor)", m.appFiltr)
 	}
 }
