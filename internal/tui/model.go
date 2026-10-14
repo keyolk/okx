@@ -16,7 +16,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/prefs"
+	"github.com/keyolk/tuikit/toast"
 
 	okxapp "github.com/keyolk/okx/internal/app"
 	"github.com/keyolk/okx/internal/cache"
@@ -45,6 +47,7 @@ const (
 	overlayPickGroup
 	overlayConfirm
 	overlayError
+	overlayPalette
 )
 
 const (
@@ -111,20 +114,31 @@ type Model struct {
 	detailBack     screen
 	assignmentBack screen
 	helpBack       screen
+	helpOff        int
 
-	// picker overlay
+	// picker and palette overlays
 	pick pickerState
+	pal  paletteState
 
 	// pending mutation awaiting confirmation
 	pending []plannedChange
 
 	filtering bool
-	status    string
-	statusErr bool
-	// statusID identifies the current status so an expiry tick for an older
-	// one cannot clear it.
-	statusID int
-	errText  string
+	errText   string
+
+	// km is the one binding table (keys.go). By value: the zero Keymap is
+	// safe, and tests that build a Model literal fall back to the defaults.
+	km keys.Keymap
+	// toasts replaces the old status string: each toast has a level, expires
+	// by its own tick, and errors stay until a key after they were seen.
+	toasts toast.Queue
+	// queued collects the commands handlers return as a side effect of
+	// pushing a toast or saving UI state; Update batches them, so a handler
+	// deep in the key path does not have to thread a tea.Cmd back out.
+	queued []tea.Cmd
+	// saver writes UI state (tab, filters, selection) debounced, off the UI
+	// loop; quit flushes it and exits on the final Saved.
+	saver prefs.Saver[uiState]
 
 	// long-running operation state
 	busyKind  busyKind
@@ -155,16 +169,24 @@ type plannedChange struct {
 // New builds the model.
 func New(ctx context.Context, c *okxapp.Context) *Model {
 	m := &Model{
-		ctx: ctx,
-		app: c,
-		st:  newStyles(),
-		gl:  detectGlyphs(),
+		ctx:    ctx,
+		app:    c,
+		st:     newStyles(),
+		gl:     detectGlyphs(),
+		km:     defaultKeymap(),
+		toasts: toast.New(1), // the footer has one status row
+		saver:  prefs.NewSaver[uiState](appName, 0),
 	}
 	m.reloadResources()
 	return m
 }
 
 func (m *Model) reloadResources() {
+	// The cursor follows the item, not the row: a refresh that adds or drops
+	// rows above it must not move it onto a different app/group/user.
+	sel := m.topSelection()
+	defer m.restoreTopSelection(sel)
+
 	m.apps = append(m.apps[:0], m.app.Index.Apps...)
 	sort.Slice(m.apps, func(i, j int) bool { return m.apps[i].Label < m.apps[j].Label })
 	m.groups = append(m.groups[:0], m.app.Index.Groups...)
@@ -296,38 +318,43 @@ func (m *Model) applyCmd(changes []plannedChange, appID string) tea.Cmd {
 
 // ---- update ---------------------------------------------------------------
 
-// Status lines are transient: they clear on the next key or after a TTL, so a
-// stale "applied 3 change(s)" never lingers. Errors stay a little longer.
-const (
-	statusTTL    = 4 * time.Second
-	statusErrTTL = 10 * time.Second
-)
-
-type statusExpireMsg struct{ id int }
-
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	prevStatus := m.statusID
 	model, cmd := m.update(msg)
-	if m.statusID != prevStatus && m.status != "" {
-		// Whatever arm set a status, arm its expiry here once rather than at
-		// every setStatus call site. The id guard lets a newer status outlive
-		// the timer of the one it replaced.
-		ttl := statusTTL
-		if m.statusErr {
-			ttl = statusErrTTL
-		}
-		id := m.statusID
-		cmd = tea.Batch(cmd, tea.Tick(ttl, func(time.Time) tea.Msg { return statusExpireMsg{id: id} }))
+	// Toasts wait while a modal is up (E6): they would otherwise expire
+	// unread behind it. Synced here once rather than at every overlay switch.
+	switch {
+	case m.overlay != overlayNone && !m.toasts.Held():
+		m.toasts = toast.Hold(m.toasts)
+	case m.overlay == overlayNone && m.toasts.Held():
+		var rel tea.Cmd
+		m.toasts, rel = toast.Release(m.toasts)
+		m.queued = append(m.queued, rel)
+	}
+	if len(m.queued) > 0 {
+		cmd = tea.Batch(append([]tea.Cmd{cmd}, m.queued...)...)
+		m.queued = nil
 	}
 	return model, cmd
 }
 
 func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case statusExpireMsg:
-		if msg.id == m.statusID {
-			m.clearStatus()
+	case toast.Expired:
+		m.toasts = toast.Update(m.toasts, msg)
+		return m, nil
+
+	case prefs.SaveTick:
+		var cmd tea.Cmd
+		m.saver, cmd = m.saver.Update(msg)
+		return m, cmd
+
+	case prefs.Saved:
+		if msg.Final {
+			return m, tea.Quit // the flushed UI state is on disk (or failed; quit anyway)
+		}
+		if msg.Err != nil {
+			m.notify("prefs", "could not save UI state: "+msg.Err.Error(), toast.Warn)
 		}
 		return m, nil
 
@@ -406,7 +433,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case screenUserApps:
 			m.revAccess = m.app.Index.UserApps(m.revUser.ID)
 		}
-		m.setStatus("refreshed", false)
+		m.notify("refresh", "refreshed", toast.Success)
 		return m, nil
 
 	case applyDoneMsg:
@@ -426,119 +453,18 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.err != nil && msg.applied == 0:
 			m.setError(msg.err)
 		case msg.failed > 0:
-			m.setStatus(fmt.Sprintf("%s applied %d, %d failed: %v",
-				m.gl.fail, msg.applied, msg.failed, msg.err), true)
+			m.notify("apply", fmt.Sprintf("applied %d, %d failed: %v",
+				msg.applied, msg.failed, msg.err), toast.Error)
 		case msg.err != nil:
-			m.setStatus(fmt.Sprintf("%s applied %d; snapshot refresh failed: %v",
-				m.gl.fail, msg.applied, msg.err), true)
+			m.notify("apply", fmt.Sprintf("applied %d; snapshot refresh failed: %v",
+				msg.applied, msg.err), toast.Error)
 		default:
-			m.setStatus(fmt.Sprintf("%s applied %d change(s)", m.gl.ok, msg.applied), false)
+			m.notify("apply", fmt.Sprintf("applied %d change(s)", msg.applied), toast.Success)
 		}
 		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
-	}
-	return m, nil
-}
-
-func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// ctrl+c quits from anywhere, ahead of every overlay and text field. It was
-	// only bound in the picker and on the top level, so the answer to "how do I
-	// get out of here" depended on which screen you were on.
-	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
-	}
-
-	// Under a Korean input source the shortcut keys arrive as jamo (`q` → `ㅂ`).
-	// Rewrite them to the Latin key at the same physical position so shortcuts
-	// fire without switching the input source back. Skipped while a text field
-	// owns keys, where the jamo is the intended input.
-	if !m.isInTextInput() {
-		msg = normalizeCJKKey(msg)
-	}
-	key := msg.String()
-
-	// Any key acknowledges the last status. A handler below may set a new one.
-	m.clearStatus()
-
-	// A running mutation owns the screen so a stray keypress cannot queue a
-	// second write against stale state.
-	if m.busyKind == busyApply {
-		if key == "q" {
-			return m, tea.Quit
-		}
-		return m, nil
-	}
-	// A refresh is read-only and the current index stays valid until it lands,
-	// so navigation, drill-down and filtering all continue to work. Only the
-	// keys that start a *write* or a second refresh are gated, below.
-
-	if m.overlay != overlayNone {
-		return m.handleOverlayKey(msg)
-	}
-	if m.filtering {
-		return m.handleFilterKey(msg)
-	}
-
-	switch key {
-	case "1":
-		m.switchTopLevel(screenApps)
-		return m, nil
-	case "2":
-		m.switchTopLevel(screenGroups)
-		return m, nil
-	case "3":
-		m.switchTopLevel(screenUsers)
-		return m, nil
-	case "q":
-		if !isTopLevel(m.screen) {
-			m.back()
-			return m, nil
-		}
-		return m, tea.Quit
-	case "?":
-		if m.screen == screenHelp {
-			m.screen = m.helpBack
-		} else {
-			m.helpBack = m.screen
-			m.screen = screenHelp
-		}
-		return m, nil
-	case "esc":
-		m.back()
-		return m, nil
-	case "R":
-		if m.refreshing() {
-			m.setStatus("already refreshing", false)
-			return m, nil
-		}
-		return m, m.startRefresh()
-	case "/":
-		if _, ok := m.currentFilter(); ok {
-			m.filtering = true
-		}
-		return m, nil
-	}
-
-	switch m.screen {
-	case screenApps:
-		return m.handleAppsKey(key)
-	case screenGroups:
-		return m.handleGroupsKey(key)
-	case screenUsers:
-		return m.handleUsersKey(key)
-	case screenAssignments:
-		return m.handleAssignmentsKey(key)
-	case screenGroupApps:
-		return m.handleGroupAppsKey(key)
-	case screenGroupMembers:
-		return m.handleGroupMembersKey(key)
-	case screenUserApps:
-		return m.handleUserAppsKey(key)
-	case screenHelp:
-		m.screen = m.helpBack
-		return m, nil
 	}
 	return m, nil
 }
@@ -560,131 +486,33 @@ func (m *Model) back() {
 	}
 }
 
-func (m *Model) handleAppsKey(key string) (tea.Model, tea.Cmd) {
-	rows := m.filteredApps()
-	switch key {
-	case "j", "down":
-		m.appCur++
-	case "k", "up":
-		m.appCur--
-	case "g", "home":
-		m.appCur = 0
-	case "G", "end":
-		m.appCur = len(rows) - 1
-	case "ctrl+d", "pgdown":
-		m.appCur += m.listHeight() / 2
-	case "ctrl+u", "pgup":
-		m.appCur -= m.listHeight() / 2
-	case "enter", "l", "right":
-		if len(rows) == 0 {
-			return m, nil
-		}
-		m.curApp = rows[m.clampIdx(m.appCur, len(rows))]
-		m.assignmentBack = screenApps
-		m.screen = screenAssignments
-		m.showGroups = false
-		m.loadAssignments()
-		return m, nil
-	}
-	m.appCur = m.clampIdx(m.appCur, len(rows))
-	m.appTop = scrollTo(m.appTop, m.appCur, m.listHeight())
-	return m, nil
-}
-
-func (m *Model) handleAssignmentsKey(key string) (tea.Model, tea.Cmd) {
-	n := m.assignmentRowCount()
-	switch key {
-	case "j", "down":
-		m.asgCur++
-	case "k", "up":
-		m.asgCur--
-	case "g", "home":
-		m.asgCur = 0
-	case "G", "end":
-		m.asgCur = n - 1
-	case "ctrl+d", "pgdown":
-		m.asgCur += m.listHeight() / 2
-	case "ctrl+u", "pgup":
-		m.asgCur -= m.listHeight() / 2
-	case "tab":
-		m.showGroups = !m.showGroups
-		m.asgCur, m.asgTop = 0, 0
-		m.asgFiltr = ""
-		return m, nil
-	case "h", "left":
-		m.back()
-		return m, nil
-	case "a":
-		if m.blockedByRefresh() {
-			return m, nil
-		}
-		m.openPicker(overlayPickUser)
-		return m, nil
-	case "A":
-		if m.blockedByRefresh() {
-			return m, nil
-		}
-		m.openPicker(overlayPickGroup)
-		return m, nil
-	case "d", "delete", "backspace":
-		if m.blockedByRefresh() {
-			return m, nil
-		}
-		return m.planRemoveSelected()
-	case "enter", "l", "right":
-		return m.drillIntoSelected()
-	}
-	m.asgCur = m.clampIdx(m.asgCur, n)
-	m.asgTop = scrollTo(m.asgTop, m.asgCur, m.listHeight())
-	return m, nil
-}
-
-func (m *Model) handleUserAppsKey(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "j", "down":
-		m.revCur++
-	case "k", "up":
-		m.revCur--
-	case "g", "home":
-		m.revCur = 0
-	case "G", "end":
-		m.revCur = len(m.revAccess) - 1
-	case "h", "left":
-		m.back()
-		return m, nil
-	}
-	m.revCur = m.clampIdx(m.revCur, len(m.revAccess))
-	m.revTop = scrollTo(m.revTop, m.revCur, m.listHeight())
-	return m, nil
-}
-
-func (m *Model) drillIntoSelected() (tea.Model, tea.Cmd) {
+func (m *Model) drillIntoSelected() tea.Cmd {
 	if m.showGroups {
 		rows := m.filteredGroups()
 		if len(rows) == 0 {
-			return m, nil
+			return nil
 		}
 		// "Who does this group actually bring in?" is the question the groups tab
 		// raises, so drilling in opens the membership rather than reporting a count.
 		m.curGroup = rows[m.clampIdx(m.asgCur, len(rows))].group
 		m.loadGroupApps()
 		m.groupAppBack = screenAssignments
-		return m, m.openGroupMembers(screenAssignments)
+		return m.openGroupMembers(screenAssignments)
 	}
 	rows := m.filteredAssignments()
 	if len(rows) == 0 {
-		return m, nil
+		return nil
 	}
 	sel := rows[m.clampIdx(m.asgCur, len(rows))]
 	m.openUserApps(sel.User, screenAssignments)
-	return m, nil
+	return nil
 }
 
-func (m *Model) planRemoveSelected() (tea.Model, tea.Cmd) {
+func (m *Model) planRemoveSelected() {
 	if m.showGroups {
 		rows := m.filteredGroups()
 		if len(rows) == 0 {
-			return m, nil
+			return
 		}
 		g := rows[m.clampIdx(m.asgCur, len(rows))]
 		m.pending = []plannedChange{{
@@ -692,12 +520,12 @@ func (m *Model) planRemoveSelected() (tea.Model, tea.Cmd) {
 			warn: fmt.Sprintf("removes app access for %d group member(s)", g.members),
 		}}
 		m.overlay = overlayConfirm
-		return m, nil
+		return
 	}
 
 	rows := m.filteredAssignments()
 	if len(rows) == 0 {
-		return m, nil
+		return
 	}
 	sel := rows[m.clampIdx(m.asgCur, len(rows))]
 	ch := plannedChange{verb: "unassign", kind: "user",
@@ -711,45 +539,15 @@ func (m *Model) planRemoveSelected() (tea.Model, tea.Cmd) {
 	}
 	m.pending = []plannedChange{ch}
 	m.overlay = overlayConfirm
-	return m, nil
 }
 
-func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	target, ok := m.currentFilter()
-	if !ok {
-		m.filtering = false
-		return m, nil
+// notify pushes a toast. Its expiry tick is batched by Update.
+func (m *Model) notify(source, text string, level toast.Level) {
+	var cmd tea.Cmd
+	m.toasts, cmd = toast.Push(m.toasts, toast.Toast{Source: source, Text: text, Level: level})
+	if cmd != nil {
+		m.queued = append(m.queued, cmd)
 	}
-	switch msg.String() {
-	case "enter", "esc":
-		m.filtering = false
-		if msg.String() == "esc" {
-			*target = ""
-		}
-	case "backspace":
-		if r := []rune(*target); len(r) > 0 {
-			*target = string(r[:len(r)-1])
-		}
-	case "ctrl+u":
-		*target = ""
-	default:
-		if msg.Type == tea.KeyRunes {
-			*target += string(msg.Runes)
-		} else if msg.String() == " " {
-			*target += " "
-		}
-	}
-	m.resetCurrentCursor()
-	return m, nil
-}
-
-func (m *Model) setStatus(s string, isErr bool) {
-	m.status, m.statusErr = s, isErr
-	m.statusID++
-}
-
-func (m *Model) clearStatus() {
-	m.status, m.statusErr = "", false
 }
 
 func (m *Model) setError(err error) {
@@ -770,12 +568,11 @@ func (m *Model) listHeight() int {
 }
 
 func (m *Model) clampTopLevel() {
-	m.appCur = m.clampIdx(m.appCur, len(m.filteredApps()))
-	m.appTop = scrollTo(m.appTop, m.appCur, m.listHeight())
-	m.groupCur = m.clampIdx(m.groupCur, len(m.filteredTopGroups()))
-	m.groupTop = scrollTo(m.groupTop, m.groupCur, m.listHeight())
-	m.userCur = m.clampIdx(m.userCur, len(m.filteredTopUsers()))
-	m.userTop = scrollTo(m.userTop, m.userCur, m.listHeight())
+	for _, s := range []screen{screenApps, screenGroups, screenUsers} {
+		if l, ok := m.listFor(s); ok {
+			m.clampList(l)
+		}
+	}
 }
 
 func (m *Model) clampIdx(i, n int) int {
@@ -789,20 +586,6 @@ func (m *Model) clampIdx(i, n int) int {
 		return n - 1
 	}
 	return i
-}
-
-// scrollTo keeps cur visible in a window of the given height.
-func scrollTo(top, cur, height int) int {
-	if cur < top {
-		return cur
-	}
-	if cur >= top+height {
-		return cur - height + 1
-	}
-	if top < 0 {
-		return 0
-	}
-	return top
 }
 
 func (m *Model) assignmentRowCount() int {
@@ -826,10 +609,21 @@ func groupList(gs []okta.Group) string {
 // Run starts the TUI program.
 func Run(ctx context.Context, c *okxapp.Context) error {
 	m := New(ctx, c)
+	// A bad keys.yaml or ui.json must not stop the TUI: keep the defaults
+	// and say why, sticky, so the user sees it.
+	km, err := loadKeymap()
+	if err != nil {
+		m.notify("keys", "keys.yaml ignored: "+err.Error(), toast.Error)
+	}
+	m.km = km
+	saved, err := prefs.Load(appName, uiState{})
+	if err != nil {
+		m.notify("prefs", "ui.json ignored: "+err.Error(), toast.Warn)
+	}
+	m.restoreUI(saved)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
 
 var _ tea.Model = (*Model)(nil)
-var _ = lipgloss.JoinVertical

@@ -7,6 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/keyolk/tuikit/toast"
+
 	"github.com/keyolk/okx/internal/cache"
 )
 
@@ -86,8 +88,7 @@ func spinnerTick() tea.Cmd {
 func (m *Model) startRefresh() tea.Cmd {
 	m.busyKind = busyRefresh
 	m.busyLabel = "refreshing snapshot"
-	m.status = ""
-	m.statusErr = false
+	m.toasts = toast.Dismiss(m.toasts, "refresh")
 	return m.refreshCmd()
 }
 
@@ -114,7 +115,7 @@ func (m *Model) blockedByRefresh() bool {
 	if !m.refreshing() {
 		return false
 	}
-	m.setStatus("refreshing — assignment changes are available once it lands", false)
+	m.notify("blocked", "refreshing — assignment changes are available once it lands", toast.Info)
 	return true
 }
 

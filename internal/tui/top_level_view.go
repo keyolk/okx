@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -51,6 +52,7 @@ func (m *Model) topLevelFor(s screen) screen {
 func (m *Model) renderTopTabs() string {
 	active := m.activeTopLevel()
 	tab := func(s screen, label string) string {
+		label += " " + m.tabBadge(s)
 		if active == s {
 			return m.st.title.Render(label)
 		}
@@ -60,6 +62,43 @@ func (m *Model) renderTopTabs() string {
 		tab(screenApps, "1 Apps") + m.st.dim.Render(" · ") +
 		tab(screenGroups, "2 Groups") + m.st.dim.Render(" · ") +
 		tab(screenUsers, "3 Users")
+}
+
+// tabBadge says what each tab holds without opening it: the row count, the
+// matches over the total while that tab is filtered, and a spinner while a
+// refresh is about to replace the counts (or, before the first snapshot,
+// instead of a misleading 0).
+func (m *Model) tabBadge(s screen) string {
+	var total int
+	switch s {
+	case screenApps:
+		total = len(m.apps)
+	case screenGroups:
+		total = len(m.groups)
+	case screenUsers:
+		total = len(m.users)
+	}
+	badge := strconv.Itoa(total)
+	if m.topFilter(s) != "" {
+		var shown int
+		switch s {
+		case screenApps:
+			shown = len(m.filteredApps())
+		case screenGroups:
+			shown = len(m.filteredTopGroups())
+		case screenUsers:
+			shown = len(m.filteredTopUsers())
+		}
+		badge = fmt.Sprintf("%d/%d", shown, total)
+	}
+	if m.refreshing() {
+		spin := m.gl.spinner[m.spinFrame%len(m.gl.spinner)]
+		if m.app.Index.Empty() {
+			return spin
+		}
+		badge += spin
+	}
+	return badge
 }
 
 func (m *Model) renderTopGroups() string {
@@ -77,20 +116,18 @@ func (m *Model) renderTopGroups() string {
 		pad("GROUP", wName) + " " + padLeft("APPS", wApps) + " " +
 			padLeft("MEMBERS", wMembers) + " " + pad("DESCRIPTION", wDescription)))
 	b.WriteByte('\n')
-	for i := m.groupTop; i < len(rows) && i < m.groupTop+h; i++ {
+	m.listLines(&b, len(rows), m.groupCur, m.groupTop, h, func(i int, sel bool) string {
 		group := rows[i]
 		members := m.memberCountLabel(group.ID)
 		line := pad(truncate(group.Profile.Name, wName, m.gl.ellipsis), wName) + " " +
 			padLeft(strconv.Itoa(m.groupAppCounts[group.ID]), wApps) + " " +
 			padLeft(members, wMembers) + " " +
 			truncate(group.Profile.Description, wDescription, m.gl.ellipsis)
-		if i == m.groupCur {
-			b.WriteString(m.st.selected.Render(m.gl.cursor + truncate(line, m.width-2, m.gl.ellipsis)))
-		} else {
-			b.WriteString(" " + line)
+		if sel {
+			return m.st.selected.Render(m.gl.cursor + truncate(line, m.width-2, m.gl.ellipsis))
 		}
-		b.WriteByte('\n')
-	}
+		return " " + line
+	})
 	return fillHeight(b.String(), h+1)
 }
 
@@ -109,19 +146,17 @@ func (m *Model) renderTopUsers() string {
 		pad("LOGIN", wLogin) + " " + pad("NAME", wName) + " " +
 			pad("STATUS", wStatus) + " " + padLeft("APPS", wApps)))
 	b.WriteByte('\n')
-	for i := m.userTop; i < len(rows) && i < m.userTop+h; i++ {
+	m.listLines(&b, len(rows), m.userCur, m.userTop, h, func(i int, sel bool) string {
 		user := rows[i]
 		line := pad(truncate(user.Profile.Login, wLogin, m.gl.ellipsis), wLogin) + " " +
 			pad(truncate(user.Name(), wName, m.gl.ellipsis), wName) + " " +
 			pad(truncate(user.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
 			padLeft(strconv.Itoa(m.userAppCounts[user.ID]), wApps)
-		if i == m.userCur {
-			b.WriteString(m.st.selected.Render(m.gl.cursor + truncate(line, m.width-2, m.gl.ellipsis)))
-		} else {
-			b.WriteString(" " + line)
+		if sel {
+			return m.st.selected.Render(m.gl.cursor + truncate(line, m.width-2, m.gl.ellipsis))
 		}
-		b.WriteByte('\n')
-	}
+		return " " + line
+	})
 	return fillHeight(b.String(), h+1)
 }
 
@@ -137,17 +172,15 @@ func (m *Model) renderGroupApps() string {
 	b.WriteString(m.st.header.Render(
 		pad("APP", wApp) + " " + pad("STATUS", wStatus) + " " + pad("SIGN-ON", wMode)))
 	b.WriteByte('\n')
-	for i := m.groupAppTop; i < len(m.groupApps) && i < m.groupAppTop+h; i++ {
+	m.listLines(&b, len(m.groupApps), m.groupAppCur, m.groupAppTop, h, func(i int, sel bool) string {
 		app := m.groupApps[i]
 		line := pad(truncate(app.Label, wApp, m.gl.ellipsis), wApp) + " " +
 			pad(truncate(app.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
 			truncate(app.SignOnMode, wMode, m.gl.ellipsis)
-		if i == m.groupAppCur {
-			b.WriteString(m.st.selected.Render(m.gl.cursor + truncate(line, m.width-2, m.gl.ellipsis)))
-		} else {
-			b.WriteString(" " + line)
+		if sel {
+			return m.st.selected.Render(m.gl.cursor + truncate(line, m.width-2, m.gl.ellipsis))
 		}
-		b.WriteByte('\n')
-	}
+		return " " + line
+	})
 	return fillHeight(b.String(), h+1)
 }

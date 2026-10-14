@@ -59,7 +59,7 @@ func TestAssignmentWritesAreBlockedDuringRefresh(t *testing.T) {
 		if model.pending != nil {
 			t.Errorf("key %q queued %d change(s) during refresh", key, len(model.pending))
 		}
-		if model.status == "" {
+		if model.toasts.Len() == 0 {
 			t.Errorf("key %q was silently ignored; expected an explanation", key)
 		}
 	}

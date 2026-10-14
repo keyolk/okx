@@ -88,40 +88,6 @@ func (m *Model) directAppCount(userID string) int {
 	return n
 }
 
-func (m *Model) handleGroupMembersKey(key string) (tea.Model, tea.Cmd) {
-	rows := m.filteredMembers()
-	switch key {
-	case "j", "down":
-		m.memberCur++
-	case "k", "up":
-		m.memberCur--
-	case "g", "home":
-		m.memberCur = 0
-	case "G", "end":
-		m.memberCur = len(rows) - 1
-	case "ctrl+d", "pgdown":
-		m.memberCur += m.listHeight() / 2
-	case "ctrl+u", "pgup":
-		m.memberCur -= m.listHeight() / 2
-	case "h", "left":
-		m.back()
-		return m, nil
-	case "tab":
-		m.screen = screenGroupApps
-		m.groupAppBack = m.memberBack
-		return m, nil
-	case "enter", "l", "right":
-		if len(rows) == 0 {
-			return m, nil
-		}
-		m.openUserApps(rows[m.clampIdx(m.memberCur, len(rows))].user, screenGroupMembers)
-		return m, nil
-	}
-	m.memberCur = m.clampIdx(m.memberCur, len(rows))
-	m.memberTop = scrollTo(m.memberTop, m.memberCur, m.listHeight())
-	return m, nil
-}
-
 func (m *Model) filteredMembers() []memberRow {
 	if m.memberFiltr == "" {
 		return m.members
@@ -167,7 +133,7 @@ func (m *Model) renderGroupMembers() string {
 			pad("STATUS", wStatus) + " " + padLeft("KEEPS", wKeeps)))
 	b.WriteByte('\n')
 
-	for i := m.memberTop; i < len(rows) && i < m.memberTop+h; i++ {
+	m.listLines(&b, len(rows), m.memberCur, m.memberTop, h, func(i int, sel bool) string {
 		r := rows[i]
 		// "KEEPS" is how many of this group's apps the member holds directly and
 		// would retain if the group were unassigned. A dash reads better than 0
@@ -179,13 +145,11 @@ func (m *Model) renderGroupMembers() string {
 		line := pad(truncate(r.user.Profile.Login, wLogin, m.gl.ellipsis), wLogin) + " " +
 			pad(truncate(r.user.Name(), wName, m.gl.ellipsis), wName) + " " +
 			pad(truncate(r.user.Status, wStatus, m.gl.ellipsis), wStatus) + " "
-		if i == m.memberCur {
-			b.WriteString(m.st.selected.Render(m.gl.cursor+line) + keeps)
-		} else {
-			b.WriteString(" " + line + keeps)
+		if sel {
+			return m.st.selected.Render(m.gl.cursor+line) + keeps
 		}
-		b.WriteByte('\n')
-	}
+		return " " + line + keeps
+	})
 	return fillHeight(b.String(), h+1)
 }
 
