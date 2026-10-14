@@ -41,6 +41,9 @@ func (m *Model) openGroupMembers(back screen) tea.Cmd {
 	m.members = m.members[:0]
 
 	if m.app.Index.HasMembers(m.curGroup.ID) {
+		// A fetch for a group opened earlier may still be in flight; its reply
+		// is ignored for this screen, so it can never clear the flag for us.
+		m.membersLoading = false
 		m.loadMembers()
 		return nil
 	}
