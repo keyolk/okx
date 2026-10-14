@@ -121,7 +121,10 @@ type Model struct {
 	filtering bool
 	status    string
 	statusErr bool
-	errText   string
+	// statusID identifies the current status so an expiry tick for an older
+	// one cannot clear it.
+	statusID int
+	errText  string
 
 	// long-running operation state
 	busyKind  busyKind
@@ -293,9 +296,41 @@ func (m *Model) applyCmd(changes []plannedChange, appID string) tea.Cmd {
 
 // ---- update ---------------------------------------------------------------
 
+// Status lines are transient: they clear on the next key or after a TTL, so a
+// stale "applied 3 change(s)" never lingers. Errors stay a little longer.
+const (
+	statusTTL    = 4 * time.Second
+	statusErrTTL = 10 * time.Second
+)
+
+type statusExpireMsg struct{ id int }
+
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	prevStatus := m.statusID
+	model, cmd := m.update(msg)
+	if m.statusID != prevStatus && m.status != "" {
+		// Whatever arm set a status, arm its expiry here once rather than at
+		// every setStatus call site. The id guard lets a newer status outlive
+		// the timer of the one it replaced.
+		ttl := statusTTL
+		if m.statusErr {
+			ttl = statusErrTTL
+		}
+		id := m.statusID
+		cmd = tea.Batch(cmd, tea.Tick(ttl, func(time.Time) tea.Msg { return statusExpireMsg{id: id} }))
+	}
+	return model, cmd
+}
+
+func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case statusExpireMsg:
+		if msg.id == m.statusID {
+			m.clearStatus()
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.small = msg.Width < minWidth || msg.Height < minHeight
@@ -423,6 +458,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		msg = normalizeCJKKey(msg)
 	}
 	key := msg.String()
+
+	// Any key acknowledges the last status. A handler below may set a new one.
+	m.clearStatus()
 
 	// A running mutation owns the screen so a stray keypress cannot queue a
 	// second write against stale state.
@@ -707,6 +745,11 @@ func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) setStatus(s string, isErr bool) {
 	m.status, m.statusErr = s, isErr
+	m.statusID++
+}
+
+func (m *Model) clearStatus() {
+	m.status, m.statusErr = "", false
 }
 
 func (m *Model) setError(err error) {

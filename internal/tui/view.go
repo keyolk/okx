@@ -107,18 +107,20 @@ func (m *Model) renderHeader() string {
 
 func (m *Model) renderFooter() string {
 	// Status line (transient) sits above the hints so the hints never move.
+	// The filter prompt comes first: it is the only echo of what the user is
+	// typing, and a leftover status or a refresh progress line used to hide it.
 	var status string
 	switch {
+	case m.filtering:
+		if target, ok := m.currentFilter(); ok {
+			status = m.st.filter.Render("/" + *target + "▏")
+		}
 	case m.busyKind != busyNone:
 		status = m.renderProgress()
 	case m.status != "" && m.statusErr:
 		status = m.st.err.Render(m.status)
 	case m.status != "":
 		status = m.st.success.Render(m.status)
-	case m.filtering:
-		if target, ok := m.currentFilter(); ok {
-			status = m.st.filter.Render("/" + *target + "▏")
-		}
 	default:
 		if filter, ok := m.currentFilter(); ok && *filter != "" {
 			status = m.st.dim.Render("filter: ") + m.st.filter.Render(*filter) +
