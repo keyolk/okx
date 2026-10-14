@@ -46,24 +46,11 @@ func keyMsgFor(t *testing.T, s string) tea.KeyMsg {
 	return tea.KeyMsg{}
 }
 
-// The table has no duplicate keys and no key hiding a pinned quit/help. An
-// uppercase key a Korean input source cannot type is allowed only when its
-// action has a reachable key in the same context (G has end, A has a on the
-// groups tab); otherwise the action would be dead for that user.
+// The table has no duplicate keys, no key hiding a pinned quit/help, and no
+// action a Korean input source cannot reach. Conflicts judges reachability
+// per action, so G (with end) passes; A is declared LatinOnly.
 func TestKeymapHasNoConflicts(t *testing.T) {
-	km := defaultKeymap()
-	reachable := map[string]bool{} // ctx/action with at least one typeable key
-	for _, b := range km.Bindings() {
-		for _, k := range b.Keys {
-			if keys.ReachableUnderCJK(k) {
-				reachable[string(b.Ctx)+"/"+b.Action] = true
-			}
-		}
-	}
-	for _, c := range km.Conflicts(allStacks...) {
-		if c.Kind == keys.Unreachable && (reachable[string(c.Ctx)+"/"+c.Actions[0]] || c.Actions[0] == "app.assignGroup") {
-			continue
-		}
+	for _, c := range defaultKeymap().Conflicts(allStacks...) {
 		t.Error(c)
 	}
 }
@@ -167,7 +154,7 @@ func TestPaletteRunsActionsFromTheTable(t *testing.T) {
 		t.Fatal("palette lists nothing")
 	}
 	for _, e := range model.pal.all {
-		if e.Action == "palette" || e.Action == "app.assign" {
+		if e.Action == "palette" || e.Action == "app.assign" || e.Action == "list.down" {
 			t.Errorf("palette offers %q on the apps list", e.Action)
 		}
 	}

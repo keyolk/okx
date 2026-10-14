@@ -24,21 +24,11 @@ type paletteState struct {
 	rows  int // match rows the box draws; set by openPalette from the height
 }
 
-// paletteHidden are actions that make no sense as a palette entry: opening
-// the palette from itself, or moves that only mean something as a held key.
-var paletteHidden = map[string]bool{
-	"palette": true, "list.down": true, "list.up": true,
-	"help.down": true, "help.up": true,
-}
-
 func (m *Model) openPalette() {
 	stack := m.active()
-	var all []keys.Entry
-	for _, e := range m.km.Or(defaultKeymap()).Entries(stack, m.keyOpts()) {
-		if !paletteHidden[e.Action] {
-			all = append(all, e)
-		}
-	}
+	// Bindings marked NoPalette (held-key steps, the palette itself) are
+	// already left out by Entries.
+	all := m.km.Or(defaultKeymap()).Entries(stack, m.keyOpts())
 	m.pal = paletteState{stack: stack, all: all, rows: m.pickerHeight()}
 	m.pal.refilter()
 	m.overlay = overlayPalette

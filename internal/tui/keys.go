@@ -86,6 +86,12 @@ func defaultKeymap() keys.Keymap {
 		x.FooterGroup = group
 		return x
 	}
+	// noPalette keeps a binding out of the `:` palette: a step that only
+	// means something as a held key, or the palette opening itself.
+	noPalette := func(x keys.Binding) keys.Binding {
+		x.NoPalette = true
+		return x
+	}
 
 	quitAlways := b("quit", []string{"ctrl+c"}, ctxAlways, grpGeneral, "quit", 0)
 	quitAlways.Pinned = true
@@ -132,6 +138,11 @@ func defaultKeymap() keys.Keymap {
 	}
 	scroll := func(x keys.Binding) keys.Binding {
 		x.FooterGroup = "scroll"
+		x.NoPalette = true
+		return x
+	}
+	latinOnly := func(x keys.Binding) keys.Binding {
+		x.LatinOnly = true
 		return x
 	}
 
@@ -140,10 +151,11 @@ func defaultKeymap() keys.Keymap {
 		views("view.apps", "1", "open Apps"),
 		views("view.groups", "2", "open Groups"),
 		views("view.users", "3", "open Users"),
-		move("list.down", []string{"j", "down"}, "down", 2, "move"),
-		move("list.up", []string{"k", "up"}, "up", 2, "move"),
+		noPalette(move("list.down", []string{"j", "down"}, "down", 2, "move")),
+		noPalette(move("list.up", []string{"k", "up"}, "up", 2, "move")),
 		// G is unreachable under a Korean input source (shift+ㅎ is still ㅎ),
-		// so end stays bound as its reachable alternate.
+		// so end stays bound as its reachable alternate; Conflicts judges
+		// reachability per action, so the pair passes.
 		move("list.top", []string{"g", "home"}, "top", 0, ""),
 		move("list.bottom", []string{"G", "end"}, "bottom", 0, ""),
 		move("list.pagedown", []string{"ctrl+d", "pgdown"}, "half page down", 0, ""),
@@ -151,14 +163,15 @@ func defaultKeymap() keys.Keymap {
 		open,
 		back,
 		short(b("filter", []string{"/"}, ctxMain, grpGeneral, "filter the current list", 5), "filter"),
-		b("palette", []string{":"}, ctxMain, grpGeneral, "command palette", 0),
+		noPalette(b("palette", []string{":"}, ctxMain, grpGeneral, "command palette", 0)),
 		refresh,
 
 		asgTab,
 		assign,
-		// A is unreachable under a Korean input source; a on the groups tab
-		// assigns groups too, so the action stays reachable there.
-		b("app.assignGroup", []string{"A"}, ctxAsg, grpApp, "assign groups", 0),
+		// A is unreachable under a Korean input source, on purpose: it is a
+		// Latin shortcut for "tab, then a", and a on the groups tab assigns
+		// groups, so a Korean layout loses no capability.
+		latinOnly(b("app.assignGroup", []string{"A"}, ctxAsg, grpApp, "assign groups", 0)),
 		remove,
 		short(b("members.apps", []string{"tab"}, ctxMembers, grpGroup, "show the apps this group grants", 2), "apps"),
 		short(b("groupapp.members", []string{"tab"}, ctxGroupApp, grpGroup, "show this group's members", 2), "members"),
