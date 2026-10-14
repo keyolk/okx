@@ -4,6 +4,8 @@ import (
 	"os"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/keyolk/tuikit/render"
+	"github.com/keyolk/tuikit/theme"
 )
 
 // Semantic color tokens. Render paths reference these, never a raw hex
@@ -72,32 +74,34 @@ func newStyles() *styles {
 // glyphs are swapped for ASCII when the terminal or locale can't be trusted
 // with box-drawing and check marks (plain SSH sessions, Windows consoles).
 type glyphSet struct {
-	check    string
-	uncheck  string
-	cursor   string
-	bullet   string
-	plus     string
-	minus    string
-	ok       string
-	fail     string
+	check   string
+	uncheck string
+	cursor  string
+	bullet  string
+	plus    string
+	minus   string
+	ok      string
+	fail    string
+	// ellipsis is the truncation marker. The ASCII set keeps okx's "...";
+	// the Unicode one is render.Ellipsis(), `~` under a CJK locale where `…`
+	// draws two cells and every cut line would overflow by one.
 	ellipsis string
-	barFull  string
-	barEmpty string
-	spinner  []string
+	// kit draws the spinner and the progress bar (SpinnerFrame, Bar). The
+	// rest of okx's set stays its own: its ASCII marks are three cells
+	// ("[x]"), the kit's one, and the picker columns are laid out for them.
+	kit theme.Glyphs
 }
 
 var unicodeGlyphs = glyphSet{
 	check: "◉", uncheck: "○", cursor: "▸", bullet: "·",
 	plus: "+", minus: "−", ok: "✓", fail: "✗", ellipsis: "…",
-	barFull: "━", barEmpty: "┄",
-	spinner: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+	kit: theme.Unicode(),
 }
 
 var asciiGlyphs = glyphSet{
 	check: "[x]", uncheck: "[ ]", cursor: ">", bullet: "-",
 	plus: "+", minus: "-", ok: "ok", fail: "!!", ellipsis: "...",
-	barFull: "#", barEmpty: ".",
-	spinner: []string{"|", "/", "-", "\\"},
+	kit: theme.ASCII(),
 }
 
 func detectGlyphs() glyphSet {
@@ -107,7 +111,9 @@ func detectGlyphs() glyphSet {
 	for _, v := range []string{os.Getenv("LC_ALL"), os.Getenv("LC_CTYPE"), os.Getenv("LANG")} {
 		if v != "" {
 			if containsUTF8(v) {
-				return unicodeGlyphs
+				g := unicodeGlyphs
+				g.ellipsis = render.Ellipsis()
+				return g
 			}
 			return asciiGlyphs
 		}

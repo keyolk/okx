@@ -138,8 +138,6 @@ func (m *Model) listLines(b *strings.Builder, total, cur, top, height int, row f
 		b.WriteString(row(i, i == cur) + "\n")
 	}
 	if rows < height {
-		// More collapses both counts into its second line below height 3.
-		_, line := render.More(start, total-end, 2)
-		b.WriteString(m.st.dim.Render(" "+line) + "\n")
+		b.WriteString(m.st.dim.Render(" "+render.MoreLine(start, total-end)) + "\n")
 	}
 }

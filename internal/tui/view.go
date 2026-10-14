@@ -97,7 +97,7 @@ func (m *Model) renderHeader() string {
 	if rightWidth < 0 {
 		rightWidth = 0
 	}
-	right = truncate(right, rightWidth, m.gl.ellipsis)
+	right = render.TruncateMarker(right, rightWidth, m.gl.ellipsis)
 	line := padBetween(left, m.st.dim.Render(right), m.width)
 	sep := m.st.dim.Render(strings.Repeat("─", m.width))
 	if m.gl.check == asciiGlyphs.check {
@@ -155,9 +155,9 @@ func (m *Model) renderApps() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.header.Render(
-		pad("APP", wLabel) + " " + padLeft("USERS", wUsers) + " " +
-			padLeft("DIRECT", wDirect) + " " + padLeft("GROUPS", wGroups) + " " +
-			pad("SIGN-ON", wMode)))
+		render.PadRight("APP", wLabel) + " " + render.PadLeft("USERS", wUsers) + " " +
+			render.PadLeft("DIRECT", wDirect) + " " + render.PadLeft("GROUPS", wGroups) + " " +
+			render.PadRight("SIGN-ON", wMode)))
 	b.WriteByte('\n')
 
 	m.listLines(&b, len(rows), m.appCur, m.appTop, h, func(i int, sel bool) string {
@@ -171,15 +171,15 @@ func (m *Model) renderApps() string {
 		}
 		groups := len(m.app.Index.AppGroups[a.ID])
 
-		label := truncate(a.Label, wLabel, m.gl.ellipsis)
-		line := pad(label, wLabel) + " " +
-			padLeft(strconv.Itoa(users), wUsers) + " " +
-			padLeft(strconv.Itoa(direct), wDirect) + " " +
-			padLeft(strconv.Itoa(groups), wGroups) + " " +
-			pad(truncate(a.SignOnMode, wMode, m.gl.ellipsis), wMode)
+		label := render.TruncateMarker(a.Label, wLabel, m.gl.ellipsis)
+		line := render.PadRight(label, wLabel) + " " +
+			render.PadLeft(strconv.Itoa(users), wUsers) + " " +
+			render.PadLeft(strconv.Itoa(direct), wDirect) + " " +
+			render.PadLeft(strconv.Itoa(groups), wGroups) + " " +
+			render.PadRight(render.TruncateMarker(a.SignOnMode, wMode, m.gl.ellipsis), wMode)
 
 		if sel {
-			return m.st.selected.Render(m.gl.cursor + truncate(line, m.width-2, m.gl.ellipsis))
+			return m.st.selected.Render(m.gl.cursor + render.TruncateMarker(line, m.width-2, m.gl.ellipsis))
 		}
 		return " " + line
 	})
@@ -204,7 +204,7 @@ func (m *Model) renderAssignments() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.header.Render(
-		pad("LOGIN", wLogin) + " " + pad("STATUS", wStatus) + " " + pad("ACCESS VIA", wVia)))
+		render.PadRight("LOGIN", wLogin) + " " + render.PadRight("STATUS", wStatus) + " " + render.PadRight("ACCESS VIA", wVia)))
 	b.WriteByte('\n')
 
 	m.listLines(&b, len(rows), m.asgCur, m.asgTop, h, func(i int, sel bool) string {
@@ -215,9 +215,9 @@ func (m *Model) renderAssignments() string {
 			marker = m.st.success.Render("D")
 		}
 		via := accessVia(a.Direct, a.ViaGroups)
-		line := pad(truncate(a.User.Profile.Login, wLogin-2, m.gl.ellipsis), wLogin-2) + " " +
-			pad(truncate(a.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
-			truncate(via, wVia, m.gl.ellipsis)
+		line := render.PadRight(render.TruncateMarker(a.User.Profile.Login, wLogin-2, m.gl.ellipsis), wLogin-2) + " " +
+			render.PadRight(render.TruncateMarker(a.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
+			render.TruncateMarker(via, wVia, m.gl.ellipsis)
 
 		if sel {
 			return m.st.selected.Render(m.gl.cursor) + marker + " " + m.st.selected.Render(line)
@@ -239,13 +239,13 @@ func (m *Model) renderAppGroups() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.header.Render(
-		pad("GROUP", wName) + " " + padLeft("MEMBERS", wMembers) + "  " + pad("ID", 22)))
+		render.PadRight("GROUP", wName) + " " + render.PadLeft("MEMBERS", wMembers) + "  " + render.PadRight("ID", 22)))
 	b.WriteByte('\n')
 
 	m.listLines(&b, len(rows), m.asgCur, m.asgTop, h, func(i int, sel bool) string {
 		g := rows[i]
-		line := pad(truncate(g.group.Profile.Name, wName, m.gl.ellipsis), wName) + " " +
-			padLeft(strconv.Itoa(g.members), wMembers) + "  " +
+		line := render.PadRight(render.TruncateMarker(g.group.Profile.Name, wName, m.gl.ellipsis), wName) + " " +
+			render.PadLeft(strconv.Itoa(g.members), wMembers) + "  " +
 			m.st.dim.Render(g.group.ID)
 		if sel {
 			return m.st.selected.Render(m.gl.cursor + line)
@@ -265,7 +265,7 @@ func (m *Model) renderUserApps() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.header.Render(
-		pad("APP", wApp) + " " + pad("STATUS", 14) + " " + pad("ACCESS VIA", wVia)))
+		render.PadRight("APP", wApp) + " " + render.PadRight("STATUS", 14) + " " + render.PadRight("ACCESS VIA", wVia)))
 	b.WriteByte('\n')
 
 	m.listLines(&b, len(m.revAccess), m.revCur, m.revTop, h, func(i int, sel bool) string {
@@ -274,9 +274,9 @@ func (m *Model) renderUserApps() string {
 		if a.Direct {
 			marker = m.st.success.Render("D")
 		}
-		line := pad(truncate(a.App.Label, wApp-2, m.gl.ellipsis), wApp-2) + " " +
-			pad(truncate(a.Status, 14, m.gl.ellipsis), 14) + " " +
-			truncate(accessVia(a.Direct, a.ViaGroups), wVia, m.gl.ellipsis)
+		line := render.PadRight(render.TruncateMarker(a.App.Label, wApp-2, m.gl.ellipsis), wApp-2) + " " +
+			render.PadRight(render.TruncateMarker(a.Status, 14, m.gl.ellipsis), 14) + " " +
+			render.TruncateMarker(accessVia(a.Direct, a.ViaGroups), wVia, m.gl.ellipsis)
 		if sel {
 			return m.st.selected.Render(m.gl.cursor) + marker + " " + m.st.selected.Render(line)
 		}
@@ -356,7 +356,7 @@ func (m *Model) renderPicker() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(m.st.title.Render(truncate(title, w, m.gl.ellipsis)) + "\n")
+	b.WriteString(m.st.title.Render(render.TruncateMarker(title, w, m.gl.ellipsis)) + "\n")
 	b.WriteString(m.st.filter.Render("/"+p.query) + m.st.dim.Render("▏") + "\n")
 	b.WriteString(m.st.dim.Render(strings.Repeat("─", inner)) + "\n")
 
@@ -377,11 +377,11 @@ func (m *Model) renderPicker() string {
 			desc = it.already
 		}
 		wLabel := clampInt(w/2, 14, 40)
-		line := pad(truncate(label, wLabel, m.gl.ellipsis), wLabel) + " "
+		line := render.PadRight(render.TruncateMarker(label, wLabel, m.gl.ellipsis), wLabel) + " "
 		if it.already != "" {
-			line += m.st.warn.Render(truncate(desc, w-wLabel-6, m.gl.ellipsis))
+			line += m.st.warn.Render(render.TruncateMarker(desc, w-wLabel-6, m.gl.ellipsis))
 		} else {
-			line += m.st.dim.Render(truncate(desc, w-wLabel-6, m.gl.ellipsis))
+			line += m.st.dim.Render(render.TruncateMarker(desc, w-wLabel-6, m.gl.ellipsis))
 		}
 
 		if sel {
@@ -409,7 +409,7 @@ func (m *Model) renderConfirm() string {
 	if len(m.pending) > 0 {
 		verb = m.pending[0].verb
 	}
-	b.WriteString(m.st.title.Render(verb+" on "+truncate(m.curApp.Label, w-16, m.gl.ellipsis)) + "\n\n")
+	b.WriteString(m.st.title.Render(verb+" on "+render.TruncateMarker(m.curApp.Label, w-16, m.gl.ellipsis)) + "\n\n")
 
 	applicable := 0
 	for _, ch := range m.pending {
@@ -423,7 +423,7 @@ func (m *Model) renderConfirm() string {
 		} else {
 			applicable++
 		}
-		b.WriteString(truncate(line, w, m.gl.ellipsis) + "\n")
+		b.WriteString(render.TruncateMarker(line, w, m.gl.ellipsis) + "\n")
 		if ch.noop != "" {
 			b.WriteString(m.st.dim.Render("    "+wrapIndent(ch.noop, w-4, "    ")) + "\n")
 		}
@@ -476,45 +476,13 @@ func shortOrg(url string) string {
 	return s
 }
 
-// pad right-pads s to w display cells.
-func pad(s string, w int) string {
-	if d := w - lipgloss.Width(s); d > 0 {
-		return s + strings.Repeat(" ", d)
-	}
-	return s
-}
-
-// padLeft left-pads s to w display cells.
-func padLeft(s string, w int) string {
-	if d := w - lipgloss.Width(s); d > 0 {
-		return strings.Repeat(" ", d) + s
-	}
-	return s
-}
-
 // padBetween places left and right at the edges of a w-cell line.
 func padBetween(left, right string, w int) string {
 	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
-		return truncate(left, w, "…")
+		return render.Truncate(left, w)
 	}
 	return left + strings.Repeat(" ", gap) + right
-}
-
-// truncate cuts s to w display cells, appending the ellipsis glyph. Callers
-// pass styled strings, so the cut must skip escape sequences: walking runes
-// split SGR codes and let a color bleed into the next line.
-func truncate(s string, w int, ellipsis string) string {
-	if w <= 0 {
-		return ""
-	}
-	if lipgloss.Width(s) <= w {
-		return s
-	}
-	if w <= lipgloss.Width(ellipsis) {
-		return ""
-	}
-	return ansi.Truncate(s, w, ellipsis)
 }
 
 // fillHeight pads a block to exactly n lines so the footer never shifts as

@@ -79,10 +79,10 @@ func (m *Model) renderPalette() string {
 		for j, k := range e.Keys {
 			ks[j] = names.Name(k)
 		}
-		keyCol := m.st.info.Render(pad(truncate(strings.Join(ks, "/"), 14, m.gl.ellipsis), 14))
-		desc := truncate(e.Help, inner-32, m.gl.ellipsis)
-		group := m.st.dim.Render(truncate(e.Group, 12, m.gl.ellipsis))
-		line := pad(desc, inner-32) + " " + keyCol + " " + group
+		keyCol := m.st.info.Render(render.PadRight(render.TruncateMarker(strings.Join(ks, "/"), 14, m.gl.ellipsis), 14))
+		desc := render.TruncateMarker(e.Help, inner-32, m.gl.ellipsis)
+		group := m.st.dim.Render(render.TruncateMarker(e.Group, 12, m.gl.ellipsis))
+		line := render.PadRight(desc, inner-32) + " " + keyCol + " " + group
 		if sel {
 			return m.st.selected.Render(m.gl.cursor) + " " + line
 		}

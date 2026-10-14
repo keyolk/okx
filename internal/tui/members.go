@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/render"
 
 	"github.com/keyolk/okx/internal/okta"
 )
@@ -128,8 +129,8 @@ func (m *Model) renderGroupMembers() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.header.Render(
-		pad("LOGIN", wLogin) + " " + pad("NAME", wName) + " " +
-			pad("STATUS", wStatus) + " " + padLeft("KEEPS", wKeeps)))
+		render.PadRight("LOGIN", wLogin) + " " + render.PadRight("NAME", wName) + " " +
+			render.PadRight("STATUS", wStatus) + " " + render.PadLeft("KEEPS", wKeeps)))
 	b.WriteByte('\n')
 
 	m.listLines(&b, len(rows), m.memberCur, m.memberTop, h, func(i int, sel bool) string {
@@ -137,13 +138,13 @@ func (m *Model) renderGroupMembers() string {
 		// "KEEPS" is how many of this group's apps the member holds directly and
 		// would retain if the group were unassigned. A dash reads better than 0
 		// for the common "loses everything" case.
-		keeps := m.st.dim.Render(padLeft("—", wKeeps))
+		keeps := m.st.dim.Render(render.PadLeft("—", wKeeps))
 		if r.directApps > 0 {
-			keeps = m.st.success.Render(padLeft(strconv.Itoa(r.directApps), wKeeps))
+			keeps = m.st.success.Render(render.PadLeft(strconv.Itoa(r.directApps), wKeeps))
 		}
-		line := pad(truncate(r.user.Profile.Login, wLogin, m.gl.ellipsis), wLogin) + " " +
-			pad(truncate(r.user.Name(), wName, m.gl.ellipsis), wName) + " " +
-			pad(truncate(r.user.Status, wStatus, m.gl.ellipsis), wStatus) + " "
+		line := render.PadRight(render.TruncateMarker(r.user.Profile.Login, wLogin, m.gl.ellipsis), wLogin) + " " +
+			render.PadRight(render.TruncateMarker(r.user.Name(), wName, m.gl.ellipsis), wName) + " " +
+			render.PadRight(render.TruncateMarker(r.user.Status, wStatus, m.gl.ellipsis), wStatus) + " "
 		if sel {
 			return m.st.selected.Render(m.gl.cursor+line) + keeps
 		}

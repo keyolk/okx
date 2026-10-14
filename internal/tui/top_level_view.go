@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/keyolk/tuikit/render"
 )
 
 func (m *Model) activeTopLevel() screen {
@@ -92,7 +94,7 @@ func (m *Model) tabBadge(s screen) string {
 		badge = fmt.Sprintf("%d/%d", shown, total)
 	}
 	if m.refreshing() {
-		spin := m.gl.spinner[m.spinFrame%len(m.gl.spinner)]
+		spin := m.gl.kit.SpinnerFrame(m.spinFrame)
 		if m.app.Index.Empty() {
 			return spin
 		}
@@ -113,18 +115,18 @@ func (m *Model) renderTopGroups() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.header.Render(
-		pad("GROUP", wName) + " " + padLeft("APPS", wApps) + " " +
-			padLeft("MEMBERS", wMembers) + " " + pad("DESCRIPTION", wDescription)))
+		render.PadRight("GROUP", wName) + " " + render.PadLeft("APPS", wApps) + " " +
+			render.PadLeft("MEMBERS", wMembers) + " " + render.PadRight("DESCRIPTION", wDescription)))
 	b.WriteByte('\n')
 	m.listLines(&b, len(rows), m.groupCur, m.groupTop, h, func(i int, sel bool) string {
 		group := rows[i]
 		members := m.memberCountLabel(group.ID)
-		line := pad(truncate(group.Profile.Name, wName, m.gl.ellipsis), wName) + " " +
-			padLeft(strconv.Itoa(m.groupAppCounts[group.ID]), wApps) + " " +
-			padLeft(members, wMembers) + " " +
-			truncate(group.Profile.Description, wDescription, m.gl.ellipsis)
+		line := render.PadRight(render.TruncateMarker(group.Profile.Name, wName, m.gl.ellipsis), wName) + " " +
+			render.PadLeft(strconv.Itoa(m.groupAppCounts[group.ID]), wApps) + " " +
+			render.PadLeft(members, wMembers) + " " +
+			render.TruncateMarker(group.Profile.Description, wDescription, m.gl.ellipsis)
 		if sel {
-			return m.st.selected.Render(m.gl.cursor + truncate(line, m.width-2, m.gl.ellipsis))
+			return m.st.selected.Render(m.gl.cursor + render.TruncateMarker(line, m.width-2, m.gl.ellipsis))
 		}
 		return " " + line
 	})
@@ -143,17 +145,17 @@ func (m *Model) renderTopUsers() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.header.Render(
-		pad("LOGIN", wLogin) + " " + pad("NAME", wName) + " " +
-			pad("STATUS", wStatus) + " " + padLeft("APPS", wApps)))
+		render.PadRight("LOGIN", wLogin) + " " + render.PadRight("NAME", wName) + " " +
+			render.PadRight("STATUS", wStatus) + " " + render.PadLeft("APPS", wApps)))
 	b.WriteByte('\n')
 	m.listLines(&b, len(rows), m.userCur, m.userTop, h, func(i int, sel bool) string {
 		user := rows[i]
-		line := pad(truncate(user.Profile.Login, wLogin, m.gl.ellipsis), wLogin) + " " +
-			pad(truncate(user.Name(), wName, m.gl.ellipsis), wName) + " " +
-			pad(truncate(user.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
-			padLeft(strconv.Itoa(m.userAppCounts[user.ID]), wApps)
+		line := render.PadRight(render.TruncateMarker(user.Profile.Login, wLogin, m.gl.ellipsis), wLogin) + " " +
+			render.PadRight(render.TruncateMarker(user.Name(), wName, m.gl.ellipsis), wName) + " " +
+			render.PadRight(render.TruncateMarker(user.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
+			render.PadLeft(strconv.Itoa(m.userAppCounts[user.ID]), wApps)
 		if sel {
-			return m.st.selected.Render(m.gl.cursor + truncate(line, m.width-2, m.gl.ellipsis))
+			return m.st.selected.Render(m.gl.cursor + render.TruncateMarker(line, m.width-2, m.gl.ellipsis))
 		}
 		return " " + line
 	})
@@ -170,15 +172,15 @@ func (m *Model) renderGroupApps() string {
 
 	var b strings.Builder
 	b.WriteString(m.st.header.Render(
-		pad("APP", wApp) + " " + pad("STATUS", wStatus) + " " + pad("SIGN-ON", wMode)))
+		render.PadRight("APP", wApp) + " " + render.PadRight("STATUS", wStatus) + " " + render.PadRight("SIGN-ON", wMode)))
 	b.WriteByte('\n')
 	m.listLines(&b, len(m.groupApps), m.groupAppCur, m.groupAppTop, h, func(i int, sel bool) string {
 		app := m.groupApps[i]
-		line := pad(truncate(app.Label, wApp, m.gl.ellipsis), wApp) + " " +
-			pad(truncate(app.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
-			truncate(app.SignOnMode, wMode, m.gl.ellipsis)
+		line := render.PadRight(render.TruncateMarker(app.Label, wApp, m.gl.ellipsis), wApp) + " " +
+			render.PadRight(render.TruncateMarker(app.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
+			render.TruncateMarker(app.SignOnMode, wMode, m.gl.ellipsis)
 		if sel {
-			return m.st.selected.Render(m.gl.cursor + truncate(line, m.width-2, m.gl.ellipsis))
+			return m.st.selected.Render(m.gl.cursor + render.TruncateMarker(line, m.width-2, m.gl.ellipsis))
 		}
 		return " " + line
 	})

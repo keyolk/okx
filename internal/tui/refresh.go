@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/keyolk/tuikit/render"
 	"github.com/keyolk/tuikit/toast"
 
 	"github.com/keyolk/okx/internal/cache"
@@ -131,7 +132,7 @@ func (m *Model) endBusy() {
 // stage, its position in the pipeline, and the item count, so a multi-minute
 // fetch never looks like a hang.
 func (m *Model) renderProgress() string {
-	spin := m.gl.spinner[m.spinFrame%len(m.gl.spinner)]
+	spin := m.gl.kit.SpinnerFrame(m.spinFrame)
 	parts := []string{m.st.info.Render(spin + " " + m.busyLabel)}
 
 	if m.prog.active {
@@ -149,7 +150,7 @@ func (m *Model) renderProgress() string {
 	}
 	parts = append(parts, m.st.dim.Render(elapsed(time.Since(m.busyStart))))
 
-	return truncate(strings.Join(parts, "  "), m.width, m.gl.ellipsis)
+	return render.TruncateMarker(strings.Join(parts, "  "), m.width, m.gl.ellipsis)
 }
 
 // progressBar renders the current stage's completion. Stages that report no
@@ -158,17 +159,8 @@ func (m *Model) progressBar() string {
 	if m.prog.total <= 0 {
 		return ""
 	}
-	const width = 12
-	filled := width * m.prog.done / m.prog.total
-	if filled > width {
-		filled = width
-	}
-	if filled < 0 {
-		filled = 0
-	}
 	pct := 100 * m.prog.done / m.prog.total
-	return m.st.info.Render(strings.Repeat(m.gl.barFull, filled)) +
-		m.st.dim.Render(strings.Repeat(m.gl.barEmpty, width-filled)) +
+	return m.st.info.Render(m.gl.kit.Bar(float64(m.prog.done)/float64(m.prog.total), 12)) +
 		m.st.dim.Render(fmt.Sprintf(" %3d%%", pct))
 }
 
