@@ -386,7 +386,37 @@ func (m *Model) renderOverlay(base string) string {
 	if box == "" {
 		return base
 	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return spliceCenter(base, box, m.width, m.height)
+}
+
+// spliceCenter draws box centred over base, keeping the base rows visible
+// around it. lipgloss.Place put the box on a blank screen, so the list the
+// user was acting on vanished behind every picker and confirm.
+func spliceCenter(base, box string, width, height int) string {
+	rows := strings.Split(base, "\n")
+	for len(rows) < height {
+		rows = append(rows, "")
+	}
+	boxRows := strings.Split(box, "\n")
+	boxW := lipgloss.Width(box)
+	top := maxInt((height-len(boxRows))/2, 0)
+	left := maxInt((width-boxW)/2, 0)
+
+	for i, br := range boxRows {
+		y := top + i
+		if y >= len(rows) {
+			break
+		}
+		row := rows[y]
+		// Cut by display cells with x/ansi so styled base rows are not split
+		// mid-escape. The resets stop a colour open in the left part from
+		// bleeding into the box, and the box's from bleeding rightward.
+		leftPart := ansi.Truncate(row, left, "")
+		leftPart += strings.Repeat(" ", left-lipgloss.Width(leftPart))
+		rightPart := ansi.TruncateLeft(row, left+boxW, "")
+		rows[y] = leftPart + ansi.ResetStyle + pad(br, boxW) + ansi.ResetStyle + rightPart
+	}
+	return strings.Join(rows, "\n")
 }
 
 func (m *Model) renderPicker() string {
@@ -597,6 +627,13 @@ func clampInt(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func minInt(a, b int) int {
