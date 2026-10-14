@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/keyolk/okx/internal/okta"
 )
@@ -545,7 +546,9 @@ func padBetween(left, right string, w int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// truncate cuts s to w display cells, appending the ellipsis glyph.
+// truncate cuts s to w display cells, appending the ellipsis glyph. Callers
+// pass styled strings, so the cut must skip escape sequences: walking runes
+// split SGR codes and let a color bleed into the next line.
 func truncate(s string, w int, ellipsis string) string {
 	if w <= 0 {
 		return ""
@@ -553,22 +556,10 @@ func truncate(s string, w int, ellipsis string) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	ew := lipgloss.Width(ellipsis)
-	if w <= ew {
-		return ellipsis[:0]
+	if w <= lipgloss.Width(ellipsis) {
+		return ""
 	}
-	// Walk runes accumulating cell width, since a CJK rune is two cells.
-	var b strings.Builder
-	used := 0
-	for _, r := range s {
-		rw := lipgloss.Width(string(r))
-		if used+rw > w-ew {
-			break
-		}
-		b.WriteRune(r)
-		used += rw
-	}
-	return b.String() + ellipsis
+	return ansi.Truncate(s, w, ellipsis)
 }
 
 // fillHeight pads a block to exactly n lines so the footer never shifts as
@@ -585,21 +576,13 @@ func fillHeight(s string, n int) string {
 	return s
 }
 
+// wrap word-wraps s to w display cells. Byte slicing split multi-byte runes
+// (Korean names in error text) and counted bytes, not cells.
 func wrap(s string, w int) string {
 	if w < 8 {
 		w = 8
 	}
-	var out []string
-	for len(s) > w {
-		cut := strings.LastIndex(s[:w], " ")
-		if cut <= 0 {
-			cut = w
-		}
-		out = append(out, s[:cut])
-		s = strings.TrimLeft(s[cut:], " ")
-	}
-	out = append(out, s)
-	return strings.Join(out, "\n")
+	return ansi.Wrap(s, w, "")
 }
 
 func wrapIndent(s string, w int, indent string) string {
