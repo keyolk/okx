@@ -323,6 +323,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, spinnerTick()
 
 	case membersDoneMsg:
+		// Fold the result into the index here, on the Update goroutine, and into
+		// the index that is current now — a refresh may have replaced the one
+		// that was live when the fetch started. A snapshot that already resolved
+		// the group is at least as fresh, so it wins.
+		if msg.err == nil && !m.app.Index.HasMembers(msg.groupID) {
+			m.app.ApplyGroupMembers(msg.groupID, msg.users)
+		}
 		// A late arrival for a group the user already left is still worth keeping
 		// in the index, but must not take over the screen.
 		if msg.groupID != m.curGroup.ID {

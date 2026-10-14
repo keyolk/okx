@@ -183,14 +183,34 @@ func (c *Context) AppHasGroup(appID, groupID string) bool {
 // (see cache.Fetch), so browsing any other group needs this one extra call —
 // far cheaper than fetching all 500-odd groups up front against a 50 req/min
 // rate limit.
+//
+// It mutates the index, so it is only safe on the goroutine that owns it. The
+// TUI splits it into FetchGroupMembers (off-thread) and ApplyGroupMembers (in
+// Update) instead.
 func (c *Context) LoadGroupMembers(ctx context.Context, groupID string) ([]okta.User, error) {
 	if c.Index.HasMembers(groupID) {
 		return c.Index.Members(groupID), nil
 	}
+	members, err := c.FetchGroupMembers(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	return c.ApplyGroupMembers(groupID, members), nil
+}
+
+// FetchGroupMembers calls Okta for one group's members without touching the
+// index, so it can run on a background goroutine while the UI reads the index.
+func (c *Context) FetchGroupMembers(ctx context.Context, groupID string) ([]okta.User, error) {
 	members, err := c.Client.GroupMembers(ctx, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("group members: %w", err)
 	}
+	return members, nil
+}
+
+// ApplyGroupMembers records fetched members in the current index and returns
+// the group's resolved membership.
+func (c *Context) ApplyGroupMembers(groupID string, members []okta.User) []okta.User {
 	ids := make([]string, len(members))
 	for i, m := range members {
 		ids[i] = m.ID
@@ -199,7 +219,7 @@ func (c *Context) LoadGroupMembers(ctx context.Context, groupID string) ([]okta.
 	// A member who joined after the last snapshot is not in Users yet; keeping
 	// the fetched records means the list shows a login instead of a bare ID.
 	c.Index.AddUsers(members)
-	return c.Index.Members(groupID), nil
+	return c.Index.Members(groupID)
 }
 
 // Assignments is a convenience passthrough to the index.

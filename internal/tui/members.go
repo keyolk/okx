@@ -47,9 +47,13 @@ func (m *Model) openGroupMembers(back screen) tea.Cmd {
 	// Unresolved: fetch just this group. Keep any in-flight refresh untouched —
 	// this is a different, much smaller request.
 	m.membersLoading = true
-	gid := m.curGroup.ID
+	// The goroutine only fetches. Writing the index from here raced View's
+	// reads of the same maps (fatal "concurrent map read and map write"), and a
+	// refresh can swap m.app.Index meanwhile, so the result is folded into
+	// whatever index is current when membersDoneMsg reaches Update.
+	app, ctx, gid := m.app, m.ctx, m.curGroup.ID
 	return func() tea.Msg {
-		users, err := m.app.LoadGroupMembers(m.ctx, gid)
+		users, err := app.FetchGroupMembers(ctx, gid)
 		return membersDoneMsg{groupID: gid, users: users, err: err}
 	}
 }
