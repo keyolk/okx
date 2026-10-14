@@ -117,7 +117,8 @@ func (m *Model) renderGroupMembers() string {
 	if len(rows) == 0 && m.memberFiltr == "" {
 		return m.centeredNotice(
 			m.st.dim.Render("this group has no members"),
-			m.st.dim.Render("tab shows the apps it grants · esc goes back"))
+			m.st.dim.Render(m.keyName(stackMembers, "members.apps")+" shows the apps it grants · "+
+				m.keyName(stackMembers, "back")+" goes back"))
 	}
 
 	const wStatus, wKeeps = 14, 6

@@ -124,7 +124,7 @@ func (m *Model) renderFooter() string {
 	default:
 		if filter, ok := m.currentFilter(); ok && *filter != "" {
 			status = m.st.dim.Render("filter: ") + m.st.filter.Render(*filter) +
-				m.st.dim.Render("  (/ to edit)")
+				m.st.dim.Render("  ("+m.keyName(m.active(), "filter")+" to edit)")
 		}
 	}
 	return status + "\n" + m.footerFor(m.active(), m.width)
@@ -310,8 +310,8 @@ var legendSections = []keys.Section{{
 		{Keys: []string{"direct + group"}, Help: "d leaves group access intact"},
 		{Keys: []string{"KEEPS"}, Help: "apps the member also holds directly; unassigning the group leaves them"},
 		{Keys: []string{"? in MEMBERS"}, Help: "membership not in the snapshot yet — open the group to resolve it"},
-		{Keys: []string{"refresh"}, Help: "browsing stays live during a refresh; assign and remove wait for it"},
 	},
+	Notes: []string{"Browsing stays live during a refresh; assign and remove wait for it to land."},
 }}
 
 func (m *Model) helpRows() int { return m.listHeight() + 1 }

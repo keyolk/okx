@@ -194,13 +194,11 @@ func (m *Model) run(action string) tea.Cmd {
 }
 
 // quit writes the UI state first; the final prefs.Saved quits (update).
-// The current state is recorded before the flush so a change no handler
-// saved (a cursor moved by a refresh) is not lost; Flush supersedes the
-// debounce tick that Save starts, so that tick is dropped here.
+// FlushWith takes the state as it is now, so a change no handler saved (a
+// cursor moved by a refresh) is not lost.
 func (m *Model) quit() tea.Cmd {
 	var cmd tea.Cmd
-	m.saver, _ = m.saver.Save(m.uiState())
-	m.saver, cmd = m.saver.Flush()
+	m.saver, cmd = m.saver.FlushWith(m.uiState())
 	return cmd
 }
 

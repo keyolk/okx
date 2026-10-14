@@ -138,8 +138,9 @@ type Model struct {
 	// by its own tick, and errors stay until a key after they were seen.
 	toasts toast.Queue
 	// queued collects the commands handlers return as a side effect of
-	// pushing a toast or saving UI state; Update batches them, so a handler
-	// deep in the key path does not have to thread a tea.Cmd back out.
+	// saving UI state; Update batches them, so a handler deep in the key
+	// path does not have to thread a tea.Cmd back out. Toasts need no slot:
+	// Update derives their ticks with toast.Ticks.
 	queued []tea.Cmd
 	// saver writes UI state (tab, filters, selection) debounced, off the UI
 	// loop; quit flushes it and exits on the final Saved.
@@ -244,10 +245,13 @@ func (m *Model) loadAssignments() {
 // Init implements tea.Model. A stale snapshot remains immediately usable while
 // its replacement is fetched by Bubble Tea rather than blocking startup.
 func (m *Model) Init() tea.Cmd {
+	// Run may have added toasts (a bad ui.json) before the program started;
+	// no Update has scheduled their expiry yet.
+	ticks := toast.Ticks(toast.Queue{}, m.toasts)
 	if !m.app.NeedsRefresh {
-		return nil
+		return ticks
 	}
-	return m.startRefresh()
+	return tea.Batch(ticks, m.startRefresh())
 }
 
 // ---- messages -------------------------------------------------------------
@@ -325,7 +329,11 @@ func (m *Model) applyCmd(changes []plannedChange, appID string) tea.Cmd {
 
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := m.toasts
 	model, cmd := m.update(msg)
+	// Handlers add toasts with toast.Add (notify) and never return a tick;
+	// the expiry ticks every new toast is owed are collected here, once.
+	cmd = tea.Batch(cmd, toast.Ticks(before, m.toasts))
 	// Toasts wait while a modal is up (E6): they would otherwise expire
 	// unread behind it. Synced here once rather than at every overlay switch.
 	switch {
@@ -538,7 +546,7 @@ func (m *Model) planRemoveSelected() {
 	switch {
 	case !sel.Direct:
 		ch.noop = "only has access via " + groupList(sel.ViaGroups) +
-			" — press Tab and remove the group assignment instead"
+			" — press " + m.keyName(stackAsg, "app.tab") + " and remove the group assignment instead"
 	case len(sel.ViaGroups) > 0:
 		ch.warn = "still keeps access via " + groupList(sel.ViaGroups)
 	}
@@ -546,13 +554,9 @@ func (m *Model) planRemoveSelected() {
 	m.overlay = overlayConfirm
 }
 
-// notify pushes a toast. Its expiry tick is batched by Update.
+// notify adds a toast. Update schedules its expiry (toast.Ticks).
 func (m *Model) notify(source, text string, level toast.Level) {
-	var cmd tea.Cmd
-	m.toasts, cmd = toast.Push(m.toasts, toast.Toast{Source: source, Text: text, Level: level})
-	if cmd != nil {
-		m.queued = append(m.queued, cmd)
-	}
+	m.toasts = toast.Add(m.toasts, toast.Toast{Source: source, Text: text, Level: level})
 }
 
 func (m *Model) setError(err error) {

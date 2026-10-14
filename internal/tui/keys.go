@@ -307,6 +307,17 @@ func (m *Model) keyState(action string) string {
 	return ""
 }
 
+// keyName is the key that runs action in stack now, drawn as the footer draws
+// it, so prose that says "press X" follows keys.yaml instead of naming the
+// default. It falls back to the action name when no key reaches it.
+func (m *Model) keyName(stack []keys.Ctx, action string) string {
+	k, ok := m.km.Or(defaultKeymap()).KeyFor(stack, action, m.keyOpts())
+	if !ok {
+		return action
+	}
+	return m.keyNames().Name(k)
+}
+
 // keyNames displays keys with glyphs (enter → ↵) only when the glyph set is
 // Unicode, so an ASCII terminal reads words.
 func (m *Model) keyNames() keys.Names {

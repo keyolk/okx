@@ -170,7 +170,8 @@ func (m *Model) renderLoadingBody() string {
 	lines := []string{
 		m.st.accent.Render("fetching the org snapshot from Okta"),
 		m.st.dim.Render("a large org takes a few minutes — the footer tracks each stage"),
-		m.st.dim.Render("1/2/3 switch views; lists fill in as soon as the fetch lands"),
+		m.st.dim.Render(m.keyName(stackTop, "view.apps") + "/" + m.keyName(stackTop, "view.groups") + "/" +
+			m.keyName(stackTop, "view.users") + " switch views; lists fill in as soon as the fetch lands"),
 	}
 
 	h := m.listHeight() + 1

@@ -316,3 +316,25 @@ func TestUserOverrides(t *testing.T) {
 		t.Errorf("footer does not show the rebound key: %q", footer)
 	}
 }
+
+// Prose that names a key ("press ⇥ …", "(/ to edit)") reads it from the
+// table, so a keys.yaml rebind does not leave the text naming the old key.
+func TestProseNamesTheReboundKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys.yaml")
+	if err := os.WriteFile(path, []byte("app.tab: [ctrl+t]\nfilter: [f]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	km, err := defaultKeymap().LoadOverrides(path, allStacks...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := topLevelTestModel()
+	model.km = km
+	if got := model.keyName(stackAsg, "app.tab"); got != "^t" {
+		t.Errorf("app.tab is named %q, want ^t", got)
+	}
+	model.appFiltr = "alp"
+	if footer := ansi.Strip(model.renderFooter()); !strings.Contains(footer, "(f to edit)") {
+		t.Errorf("filter hint does not name the rebound key: %q", footer)
+	}
+}
