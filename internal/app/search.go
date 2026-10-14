@@ -4,8 +4,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/keyolk/okx/internal/fuzzy"
 	"github.com/keyolk/okx/internal/okta"
+	"github.com/keyolk/tuikit/fuzzy"
 )
 
 // SearchResult is one app, group, or member matched in the cached snapshot.
@@ -97,7 +97,9 @@ func bestScore(query string, fields ...string) (int, bool) {
 		if field == "" {
 			continue
 		}
-		score, _, ok := fuzzy.Score(field, query)
+		// Lowercased: the kit scorer is smart-case, and a search or filter
+		// typed with a capital must keep matching as it did.
+		score, _, ok := fuzzy.Score(field, strings.ToLower(query))
 		if ok && (!matched || score > best) {
 			best, matched = score, true
 		}

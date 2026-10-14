@@ -167,3 +167,18 @@ func searchTestContext() *Context {
 
 	return &Context{Index: cache.NewIndex(snapshot)}
 }
+
+// The kit's fuzzy scorer is smart-case; okx lowercases the pattern so a
+// capital in a filter or CLI argument still matches as before.
+func TestFuzzyMatchingStaysCaseInsensitive(t *testing.T) {
+	c := searchTestContext()
+	if !c.AppMatches("app-1", "PlatAdm") {
+		t.Error("AppMatches(app-1, PlatAdm) = false; a capital made the filter case-sensitive")
+	}
+	apps := []okta.App{{ID: "app-1", Label: "GitHub Enterprise"}, {ID: "app-2", Label: "Billing"}}
+	got, err := resolve("app", "GithubEnt", apps,
+		func(a okta.App) string { return a.ID }, func(a okta.App) []string { return []string{a.Label} })
+	if err != nil || got.ID != "app-1" {
+		t.Fatalf("resolve(GithubEnt) = %v, %v; want app-1", got.ID, err)
+	}
+}

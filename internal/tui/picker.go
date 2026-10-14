@@ -11,8 +11,8 @@ import (
 	"github.com/keyolk/tuikit/toast"
 
 	"github.com/keyolk/okx/internal/cache"
-	"github.com/keyolk/okx/internal/fuzzy"
 	"github.com/keyolk/okx/internal/okta"
+	"github.com/keyolk/tuikit/fuzzy"
 )
 
 // pickerState drives the assign overlay: a fuzzy-filtered, multi-select list
@@ -89,7 +89,7 @@ func (p *pickerState) refilter() {
 	if p.query != "" {
 		p.matches = p.matches[:0]
 		seen := map[int]bool{}
-		for _, m := range fuzzy.Filter(labels, p.query) {
+		for _, m := range caseless(labels, p.query) {
 			p.matches = append(p.matches, m)
 			seen[m.Index] = true
 		}
@@ -97,7 +97,7 @@ func (p *pickerState) refilter() {
 		for i, it := range p.items {
 			descs[i] = it.desc
 		}
-		for _, m := range fuzzy.Filter(descs, p.query) {
+		for _, m := range caseless(descs, p.query) {
 			if !seen[m.Index] && p.items[m.Index].desc != "" {
 				// Description hits rank below label hits.
 				m.Score -= 64
@@ -263,7 +263,7 @@ func (m *Model) filteredTopGroups() []okta.Group {
 	for i, g := range m.groups {
 		hay[i] = g.Profile.Name + " " + g.Profile.Description + " " + g.ID
 	}
-	matches := fuzzy.Filter(hay, m.groupFiltr)
+	matches := caseless(hay, m.groupFiltr)
 	out := make([]okta.Group, 0, len(matches))
 	for _, match := range matches {
 		out = append(out, m.groups[match.Index])
@@ -279,7 +279,7 @@ func (m *Model) filteredTopUsers() []okta.User {
 	for i, u := range m.users {
 		hay[i] = u.Profile.Login + " " + u.Profile.Email + " " + u.Name() + " " + u.ID
 	}
-	matches := fuzzy.Filter(hay, m.userFiltr)
+	matches := caseless(hay, m.userFiltr)
 	out := make([]okta.User, 0, len(matches))
 	for _, match := range matches {
 		out = append(out, m.users[match.Index])
@@ -305,7 +305,7 @@ func (m *Model) filteredAssignments() []cache.Assignment {
 		}
 		hay[i] = b.String()
 	}
-	matches := fuzzy.Filter(hay, m.asgFiltr)
+	matches := caseless(hay, m.asgFiltr)
 	out := make([]cache.Assignment, 0, len(matches))
 	for _, mt := range matches {
 		out = append(out, m.assignments[mt.Index])
@@ -321,10 +321,18 @@ func (m *Model) filteredGroups() []groupRow {
 	for i, g := range m.appGroups {
 		names[i] = g.group.Profile.Name
 	}
-	matches := fuzzy.Filter(names, m.asgFiltr)
+	matches := caseless(names, m.asgFiltr)
 	out := make([]groupRow, 0, len(matches))
 	for _, mt := range matches {
 		out = append(out, m.appGroups[mt.Index])
 	}
 	return out
+}
+
+// caseless ranks hay against a filter the user typed. The kit scorer is
+// smart-case (an uppercase rune makes it case-sensitive); okx's filters were
+// always case-insensitive, and the apps filter goes through app.AppMatches,
+// which lowercases too, so every list lowercases the pattern to stay alike.
+func caseless(hay []string, query string) []fuzzy.Match {
+	return fuzzy.Filter(hay, strings.ToLower(query))
 }

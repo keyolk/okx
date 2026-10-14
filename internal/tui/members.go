@@ -8,7 +8,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/keyolk/okx/internal/fuzzy"
 	"github.com/keyolk/okx/internal/okta"
 )
 
@@ -96,7 +95,7 @@ func (m *Model) filteredMembers() []memberRow {
 	for i, r := range m.members {
 		hay[i] = r.user.Profile.Login + " " + r.user.Profile.Email + " " + r.user.Name()
 	}
-	matches := fuzzy.Filter(hay, m.memberFiltr)
+	matches := caseless(hay, m.memberFiltr)
 	out := make([]memberRow, 0, len(matches))
 	for _, mt := range matches {
 		out = append(out, m.members[mt.Index])
