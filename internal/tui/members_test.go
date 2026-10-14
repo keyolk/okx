@@ -244,3 +244,27 @@ func membersTestModel() *Model {
 	model.height = 30
 	return model
 }
+
+// Leaving an unresolved group mid-fetch and opening a cached one must not keep
+// the "resolving" notice: the late reply is for another group and is ignored,
+// so nothing else would ever clear it.
+func TestCachedGroupClearsLoadingFromEarlierFetch(t *testing.T) {
+	model := membersTestModel()
+	model.curGroup = okta.Group{ID: "group-unfetched"}
+	if cmd := model.openGroupMembers(screenGroups); cmd == nil {
+		t.Fatal("setup: unresolved group issued no fetch")
+	}
+	model.handleKey(keyMsg("esc"))
+
+	model.curGroup = okta.Group{ID: "group-1"}
+	model.curGroup.Profile.Name = "Platform Admins"
+	model.openGroupMembers(screenGroups)
+	model.Update(membersDoneMsg{groupID: "group-unfetched"})
+
+	if model.membersLoading {
+		t.Fatal("membersLoading still set on a cached group")
+	}
+	if view := model.View(); strings.Contains(view, "resolving members") {
+		t.Errorf("cached group still shows the resolving notice:\n%s", view)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/keyolk/okx/internal/okta"
 )
@@ -107,18 +108,20 @@ func (m *Model) renderHeader() string {
 
 func (m *Model) renderFooter() string {
 	// Status line (transient) sits above the hints so the hints never move.
+	// The filter prompt comes first: it is the only echo of what the user is
+	// typing, and a leftover status or a refresh progress line used to hide it.
 	var status string
 	switch {
+	case m.filtering:
+		if target, ok := m.currentFilter(); ok {
+			status = m.st.filter.Render("/" + *target + "▏")
+		}
 	case m.busyKind != busyNone:
 		status = m.renderProgress()
 	case m.status != "" && m.statusErr:
 		status = m.st.err.Render(m.status)
 	case m.status != "":
 		status = m.st.success.Render(m.status)
-	case m.filtering:
-		if target, ok := m.currentFilter(); ok {
-			status = m.st.filter.Render("/" + *target + "▏")
-		}
 	default:
 		if filter, ok := m.currentFilter(); ok && *filter != "" {
 			status = m.st.dim.Render("filter: ") + m.st.filter.Render(*filter) +
@@ -383,7 +386,37 @@ func (m *Model) renderOverlay(base string) string {
 	if box == "" {
 		return base
 	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return spliceCenter(base, box, m.width, m.height)
+}
+
+// spliceCenter draws box centred over base, keeping the base rows visible
+// around it. lipgloss.Place put the box on a blank screen, so the list the
+// user was acting on vanished behind every picker and confirm.
+func spliceCenter(base, box string, width, height int) string {
+	rows := strings.Split(base, "\n")
+	for len(rows) < height {
+		rows = append(rows, "")
+	}
+	boxRows := strings.Split(box, "\n")
+	boxW := lipgloss.Width(box)
+	top := maxInt((height-len(boxRows))/2, 0)
+	left := maxInt((width-boxW)/2, 0)
+
+	for i, br := range boxRows {
+		y := top + i
+		if y >= len(rows) {
+			break
+		}
+		row := rows[y]
+		// Cut by display cells with x/ansi so styled base rows are not split
+		// mid-escape. The resets stop a colour open in the left part from
+		// bleeding into the box, and the box's from bleeding rightward.
+		leftPart := ansi.Truncate(row, left, "")
+		leftPart += strings.Repeat(" ", left-lipgloss.Width(leftPart))
+		rightPart := ansi.TruncateLeft(row, left+boxW, "")
+		rows[y] = leftPart + ansi.ResetStyle + pad(br, boxW) + ansi.ResetStyle + rightPart
+	}
+	return strings.Join(rows, "\n")
 }
 
 func (m *Model) renderPicker() string {
@@ -543,7 +576,9 @@ func padBetween(left, right string, w int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// truncate cuts s to w display cells, appending the ellipsis glyph.
+// truncate cuts s to w display cells, appending the ellipsis glyph. Callers
+// pass styled strings, so the cut must skip escape sequences: walking runes
+// split SGR codes and let a color bleed into the next line.
 func truncate(s string, w int, ellipsis string) string {
 	if w <= 0 {
 		return ""
@@ -551,22 +586,10 @@ func truncate(s string, w int, ellipsis string) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	ew := lipgloss.Width(ellipsis)
-	if w <= ew {
-		return ellipsis[:0]
+	if w <= lipgloss.Width(ellipsis) {
+		return ""
 	}
-	// Walk runes accumulating cell width, since a CJK rune is two cells.
-	var b strings.Builder
-	used := 0
-	for _, r := range s {
-		rw := lipgloss.Width(string(r))
-		if used+rw > w-ew {
-			break
-		}
-		b.WriteRune(r)
-		used += rw
-	}
-	return b.String() + ellipsis
+	return ansi.Truncate(s, w, ellipsis)
 }
 
 // fillHeight pads a block to exactly n lines so the footer never shifts as
@@ -583,21 +606,13 @@ func fillHeight(s string, n int) string {
 	return s
 }
 
+// wrap word-wraps s to w display cells. Byte slicing split multi-byte runes
+// (Korean names in error text) and counted bytes, not cells.
 func wrap(s string, w int) string {
 	if w < 8 {
 		w = 8
 	}
-	var out []string
-	for len(s) > w {
-		cut := strings.LastIndex(s[:w], " ")
-		if cut <= 0 {
-			cut = w
-		}
-		out = append(out, s[:cut])
-		s = strings.TrimLeft(s[cut:], " ")
-	}
-	out = append(out, s)
-	return strings.Join(out, "\n")
+	return ansi.Wrap(s, w, "")
 }
 
 func wrapIndent(s string, w int, indent string) string {
@@ -612,6 +627,13 @@ func clampInt(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func minInt(a, b int) int {

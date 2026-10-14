@@ -136,6 +136,11 @@ func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case overlayConfirm:
+		// enter is the key that opened this modal from the list and the picker,
+		// so a double-tap would confirm a removal unseen. Removals take y only.
+		if key == "enter" && pendingRemoves(m.pending) {
+			return m, nil
+		}
 		switch key {
 		case "y", "Y", "enter":
 			pending := m.pending
@@ -166,6 +171,16 @@ func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePickerKey(msg)
 	}
 	return m, nil
+}
+
+// pendingRemoves reports whether confirming would actually unassign anything.
+func pendingRemoves(pending []plannedChange) bool {
+	for _, ch := range pending {
+		if ch.verb == "unassign" && ch.noop == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

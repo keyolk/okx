@@ -35,3 +35,31 @@ func TestFilteredAppsMatchesAssignedGroupAndMember(t *testing.T) {
 		}
 	}
 }
+
+// A removal is confirmed with y only; enter (the drill-in key) must not fire it.
+func TestConfirmRemovalIgnoresEnter(t *testing.T) {
+	model := topLevelTestModel()
+	model.pending = []plannedChange{{verb: "unassign", kind: "user", id: "user-1", label: "u"}}
+	model.overlay = overlayConfirm
+
+	model.handleKey(keyMsg("enter"))
+	if model.overlay != overlayConfirm || model.busyKind != busyNone {
+		t.Fatalf("enter applied a removal: overlay=%v busy=%v", model.overlay, model.busyKind)
+	}
+
+	_, cmd := model.handleKey(keyMsg("y"))
+	if model.busyKind != busyApply || cmd == nil {
+		t.Fatalf("y did not apply the removal: busy=%v cmd=%v", model.busyKind, cmd != nil)
+	}
+}
+
+// Adding access is not destructive, so enter still confirms it.
+func TestConfirmAssignAcceptsEnter(t *testing.T) {
+	model := topLevelTestModel()
+	model.pending = []plannedChange{{verb: "assign", kind: "user", id: "user-1", label: "u"}}
+	model.overlay = overlayConfirm
+
+	if _, cmd := model.handleKey(keyMsg("enter")); model.busyKind != busyApply || cmd == nil {
+		t.Fatalf("enter did not apply an assignment: busy=%v", model.busyKind)
+	}
+}
