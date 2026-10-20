@@ -51,19 +51,46 @@ func (m *Model) topLevelFor(s screen) screen {
 	return screenApps
 }
 
+// topTab is one numbered tab of the header: the screen it opens, the action
+// its number key runs, and its label as drawn.
+type topTab struct {
+	screen screen
+	action string
+	label  string
+}
+
+// The header is "okx", two spaces, then the tabs joined by tabSep. Drawing
+// and mouse hit testing both read these, so the click targets cannot drift
+// from the labels.
+const (
+	headerBrand = "okx"
+	headerGap   = "  "
+	tabSep      = " · "
+)
+
+func (m *Model) topTabs() []topTab {
+	return []topTab{
+		{screenApps, "view.apps", "1 Apps " + m.tabBadge(screenApps)},
+		{screenGroups, "view.groups", "2 Groups " + m.tabBadge(screenGroups)},
+		{screenUsers, "view.users", "3 Users " + m.tabBadge(screenUsers)},
+	}
+}
+
 func (m *Model) renderTopTabs() string {
 	active := m.activeTopLevel()
-	tab := func(s screen, label string) string {
-		label += " " + m.tabBadge(s)
-		if active == s {
-			return m.st.title.Render(label)
+	var b strings.Builder
+	b.WriteString(m.st.title.Render(headerBrand) + headerGap)
+	for i, t := range m.topTabs() {
+		if i > 0 {
+			b.WriteString(m.st.dim.Render(tabSep))
 		}
-		return m.st.dim.Render(label)
+		if active == t.screen {
+			b.WriteString(m.st.title.Render(t.label))
+		} else {
+			b.WriteString(m.st.dim.Render(t.label))
+		}
 	}
-	return m.st.title.Render("okx") + "  " +
-		tab(screenApps, "1 Apps") + m.st.dim.Render(" · ") +
-		tab(screenGroups, "2 Groups") + m.st.dim.Render(" · ") +
-		tab(screenUsers, "3 Users")
+	return b.String()
 }
 
 // tabBadge says what each tab holds without opening it: the row count, the

@@ -18,6 +18,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/input"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/prefs"
 	"github.com/keyolk/tuikit/toast"
 
@@ -154,6 +155,11 @@ type Model struct {
 	progCh    chan progressMsg
 	progGen   int
 	spinFrame int
+
+	// clicks detects the second click of a double click; now is its clock,
+	// replaceable in tests.
+	clicks mouse.Clicks
+	now    func() time.Time
 }
 
 type groupRow struct {
@@ -478,6 +484,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	}
 	return m, nil
 }
@@ -630,7 +639,9 @@ func Run(ctx context.Context, c *okxapp.Context) error {
 		m.notify("prefs", "ui.json ignored: "+err.Error(), toast.Warn)
 	}
 	m.restoreUI(saved)
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}
+	opts = append(opts, mouse.ProgramOptions()...)
+	p := tea.NewProgram(m, opts...)
 	_, err = p.Run()
 	return err
 }

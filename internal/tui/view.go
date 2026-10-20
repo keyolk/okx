@@ -330,25 +330,31 @@ func (m *Model) renderHelp() string {
 // ---- overlays -------------------------------------------------------------
 
 func (m *Model) renderOverlay(base string) string {
-	var box string
-	switch m.overlay {
-	case overlayPickUser, overlayPickGroup:
-		box = m.renderPicker()
-	case overlayConfirm:
-		box = m.renderConfirm()
-	case overlayError:
-		box = m.st.modalWarn.Render(
-			m.st.err.Render("error") + "\n\n" +
-				wrap(m.errText, minInt(m.width-8, 76)) + "\n\n" +
-				m.footerFor(stackError, minInt(m.width-8, 76)))
-	case overlayPalette:
-		box = m.renderPalette()
-	}
+	box := m.overlayBox()
 	if box == "" {
 		return base
 	}
 	// Over the screen, not instead of it (E8): the list being acted on stays.
 	return render.Center(base, box, m.width, m.height)
+}
+
+// overlayBox draws the modal for the open overlay; the mouse handler measures
+// the same string to know where the box landed.
+func (m *Model) overlayBox() string {
+	switch m.overlay {
+	case overlayPickUser, overlayPickGroup:
+		return m.renderPicker()
+	case overlayConfirm:
+		return m.renderConfirm()
+	case overlayError:
+		return m.st.modalWarn.Render(
+			m.st.err.Render("error") + "\n\n" +
+				wrap(m.errText, minInt(m.width-8, 76)) + "\n\n" +
+				m.footerFor(stackError, minInt(m.width-8, 76)))
+	case overlayPalette:
+		return m.renderPalette()
+	}
+	return ""
 }
 
 func (m *Model) renderPicker() string {
