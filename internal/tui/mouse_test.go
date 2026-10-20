@@ -123,6 +123,27 @@ func TestSlowSecondClickIsNotADoubleClick(t *testing.T) {
 	}
 }
 
+// A key between two clicks breaks the pair. Click a row, j, k back to it,
+// click again inside the double-click window: that is a fresh first click,
+// so it selects and must not open the app.
+func TestKeyBetweenClicksBreaksTheDoubleClick(t *testing.T) {
+	m := mouseModel()
+	x, y := at(t, m, "Bravo Console")
+	click(m, x, y)
+	m.Update(keyMsg("j"))
+	m.Update(keyMsg("k"))
+	if m.appCur != 1 {
+		t.Fatalf("appCur=%d after j, k; want back on Bravo (1)", m.appCur)
+	}
+	click(m, x, y)
+	if m.screen != screenApps {
+		t.Fatalf("screen=%v: a key between the clicks must break the double click", m.screen)
+	}
+	if m.appCur != 1 {
+		t.Fatalf("appCur=%d, want Bravo (1) still selected", m.appCur)
+	}
+}
+
 func TestDoubleClickDrillsThroughEveryList(t *testing.T) {
 	m := mouseModel()
 	key(m, "2")
@@ -411,6 +432,27 @@ func TestPickerSecondClickCommitsToTheConfirmModalOnly(t *testing.T) {
 	}
 	if m.busyKind != busyNone {
 		t.Fatal("the picker's second click applied the change")
+	}
+}
+
+// The picker shares the detector, so a key between two clicks on a picker
+// row breaks the pair too: down, up back to the row, click again only
+// selects, and nothing reaches the confirm modal.
+func TestPickerKeyBetweenClicksBreaksTheDoubleClick(t *testing.T) {
+	m := pickerModel()
+	x, y := at(t, m, "cyd@example.com")
+	click(m, x, y)
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if m.pick.cur != 2 {
+		t.Fatalf("cur=%d after down, up; want back on cyd (2)", m.pick.cur)
+	}
+	click(m, x, y)
+	if m.overlay != overlayPickUser || len(m.pending) != 0 {
+		t.Fatalf("overlay=%v pending=%v: a key between the clicks must break the double click", m.overlay, m.pending)
+	}
+	if m.pick.cur != 2 {
+		t.Fatalf("cur=%d, want cyd (2) still selected", m.pick.cur)
 	}
 }
 
