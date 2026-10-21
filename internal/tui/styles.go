@@ -40,6 +40,9 @@ type styles struct {
 	modal     lipgloss.Style
 	modalWarn lipgloss.Style
 	checked   lipgloss.Style
+	// selection draws the drag selection in reverse video, which reads on
+	// any palette.
+	selection lipgloss.Style
 }
 
 func newStyles() *styles {
@@ -60,6 +63,10 @@ func newStyles() *styles {
 		footer:   r.NewStyle().Foreground(cDim),
 		filter:   r.NewStyle().Foreground(cInfo),
 		checked:  r.NewStyle().Foreground(cSuccess),
+		// Its own renderer: under NO_COLOR termenv picks the Ascii profile,
+		// which drops reverse video too, and the selection would vanish.
+		// theme.NewRenderer keeps attributes while dropping colors.
+		selection: theme.NewRenderer(os.Stderr).NewStyle().Reverse(true),
 		modal: r.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(cFocus).

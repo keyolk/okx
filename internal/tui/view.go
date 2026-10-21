@@ -32,11 +32,11 @@ func (m *Model) View() string {
 		body = m.renderScreen()
 	}
 
-	base := lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(), body, m.renderFooter())
-	if m.overlay == overlayNone {
-		return base
+	frame := lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(), body, m.renderFooter())
+	if m.overlay != overlayNone {
+		frame = m.renderOverlay(frame)
 	}
-	return m.renderOverlay(base)
+	return m.textSel.Render(frame, m.selPanes(), m.st.selection)
 }
 
 func (m *Model) renderScreen() string {
