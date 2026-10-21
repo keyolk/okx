@@ -20,6 +20,7 @@ import (
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/prefs"
+	"github.com/keyolk/tuikit/selection"
 	"github.com/keyolk/tuikit/toast"
 
 	okxapp "github.com/keyolk/okx/internal/app"
@@ -160,6 +161,8 @@ type Model struct {
 	// replaceable in tests.
 	clicks mouse.Clicks
 	now    func() time.Time
+	// textSel is the drag selection (selection.go).
+	textSel selection.Selection
 }
 
 type groupRow struct {
@@ -486,10 +489,17 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A key between two clicks breaks the pair: click, move away and back
 		// by keyboard, click again must not count as a double click.
 		m.clicks = mouse.Clicks{}
+		// A key is the "next action" that ends a selection, as in the mod
+		// engine; cleared here, not in handleKey, for the same reason.
+		m.textSel.Clear()
 		return m.handleKey(msg)
 
 	case tea.MouseMsg:
-		return m.handleMouse(msg)
+		return m.selectionMouse(msg)
+
+	case selection.CopiedMsg:
+		m.copied(msg)
+		return m, nil
 	}
 	return m, nil
 }

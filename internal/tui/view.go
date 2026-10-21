@@ -32,11 +32,11 @@ func (m *Model) View() string {
 		body = m.renderScreen()
 	}
 
-	base := lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(), body, m.renderFooter())
-	if m.overlay == overlayNone {
-		return base
+	frame := lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(), body, m.renderFooter())
+	if m.overlay != overlayNone {
+		frame = m.renderOverlay(frame)
 	}
-	return m.renderOverlay(base)
+	return m.textSel.Render(frame, m.selPanes(), m.st.selection)
 }
 
 func (m *Model) renderScreen() string {
@@ -155,7 +155,10 @@ func (m *Model) renderApps() string {
 
 	// Column widths: label takes what's left after the fixed-width numerics.
 	const wUsers, wDirect, wGroups, wMode = 6, 7, 7, 16
-	wLabel := m.width - wUsers - wDirect - wGroups - wMode - 4
+	// 4 gaps between the five columns plus the cursor cell every row starts
+	// with; without the cursor cell each row was one cell wider than the
+	// terminal and wrapped, shifting every row below it.
+	wLabel := m.width - wUsers - wDirect - wGroups - wMode - 5
 	if wLabel < 12 {
 		wLabel = 12
 	}

@@ -524,3 +524,22 @@ func TestPaletteRowsAndOutsideClick(t *testing.T) {
 		t.Fatal("a click outside did not close the palette")
 	}
 }
+
+// A row wider than the terminal wraps there and shifts every row below it,
+// but a View() string never wraps, so click tests pass regardless (E14).
+func TestNoScreenIsWiderThanTheTerminal(t *testing.T) {
+	for _, w := range []int{minWidth, 80, 100, 140} {
+		m := mouseModel()
+		m.width = w
+		for _, k := range []string{"", "2", "3", "1", "enter", "?"} {
+			if k != "" {
+				key(m, k)
+			}
+			for i, line := range strings.Split(m.View(), "\n") {
+				if got := ansi.StringWidth(line); got > w {
+					t.Fatalf("width %d, after %q: line %d is %d cells", w, k, i, got)
+				}
+			}
+		}
+	}
+}
