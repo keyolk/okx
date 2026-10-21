@@ -2,6 +2,7 @@ package tui
 
 import (
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 )
 
 // keys.go is the one binding table. Dispatch (handleKey), the footer, the `?`
@@ -128,6 +129,14 @@ func defaultKeymap() keys.Keymap {
 	remove := b("app.remove", []string{"d", "delete", "backspace"}, ctxAsg, grpApp, "remove the selected assignment", 3)
 	remove.Short = "remove"
 
+	// Every list on every screen selects a user, a group or an app, so `o`
+	// lives in ctxList once rather than in each screen's context.
+	openLink := link.Binding(ctxList)
+	openLink.Group = grpNav
+	openLink.Help = "open the selected user, group or app in the admin console"
+	openLink.Short = "admin"
+	openLink.Footer = 7 // last to go in, first dropped on a narrow pane
+
 	back := b("back", []string{"esc", "q", "h", "left"}, ctxSub, grpNav, "back", 4)
 
 	helpClose := b("help.close", []string{"esc", "q"}, ctxHelp, grpGeneral, "close help", 1)
@@ -161,6 +170,7 @@ func defaultKeymap() keys.Keymap {
 		move("list.pagedown", []string{"ctrl+d", "pgdown"}, "half page down", 0, ""),
 		move("list.pageup", []string{"ctrl+u", "pgup"}, "half page up", 0, ""),
 		open,
+		openLink,
 		back,
 		short(b("filter", []string{"/"}, ctxMain, grpGeneral, "filter the current list", 5), "filter"),
 		noPalette(b("palette", []string{":"}, ctxMain, grpGeneral, "command palette", 0)),

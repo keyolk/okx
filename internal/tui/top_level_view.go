@@ -148,7 +148,7 @@ func (m *Model) renderTopGroups() string {
 	m.listLines(&b, len(rows), m.groupCur, m.groupTop, h, func(i int, sel bool) string {
 		group := rows[i]
 		members := m.memberCountLabel(group.ID)
-		line := render.PadRight(render.TruncateMarker(group.Profile.Name, wName, m.gl.ellipsis), wName) + " " +
+		line := m.linkCell(m.groupURL(group), group.Profile.Name, wName) + " " +
 			render.PadLeft(strconv.Itoa(m.groupAppCounts[group.ID]), wApps) + " " +
 			render.PadLeft(members, wMembers) + " " +
 			render.TruncateMarker(group.Profile.Description, wDescription, m.gl.ellipsis)
@@ -177,7 +177,7 @@ func (m *Model) renderTopUsers() string {
 	b.WriteByte('\n')
 	m.listLines(&b, len(rows), m.userCur, m.userTop, h, func(i int, sel bool) string {
 		user := rows[i]
-		line := render.PadRight(render.TruncateMarker(user.Profile.Login, wLogin, m.gl.ellipsis), wLogin) + " " +
+		line := m.linkCell(m.userURL(user), user.Profile.Login, wLogin) + " " +
 			render.PadRight(render.TruncateMarker(user.Name(), wName, m.gl.ellipsis), wName) + " " +
 			render.PadRight(render.TruncateMarker(user.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
 			render.PadLeft(strconv.Itoa(m.userAppCounts[user.ID]), wApps)
@@ -203,7 +203,7 @@ func (m *Model) renderGroupApps() string {
 	b.WriteByte('\n')
 	m.listLines(&b, len(m.groupApps), m.groupAppCur, m.groupAppTop, h, func(i int, sel bool) string {
 		app := m.groupApps[i]
-		line := render.PadRight(render.TruncateMarker(app.Label, wApp, m.gl.ellipsis), wApp) + " " +
+		line := m.linkCell(m.appURL(app), app.Label, wApp) + " " +
 			render.PadRight(render.TruncateMarker(app.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
 			render.TruncateMarker(app.SignOnMode, wMode, m.gl.ellipsis)
 		if sel {

@@ -143,7 +143,7 @@ func (m *Model) renderGroupMembers() string {
 		if r.directApps > 0 {
 			keeps = m.st.success.Render(render.PadLeft(strconv.Itoa(r.directApps), wKeeps))
 		}
-		line := render.PadRight(render.TruncateMarker(r.user.Profile.Login, wLogin, m.gl.ellipsis), wLogin) + " " +
+		line := m.linkCell(m.userURL(r.user), r.user.Profile.Login, wLogin) + " " +
 			render.PadRight(render.TruncateMarker(r.user.Name(), wName, m.gl.ellipsis), wName) + " " +
 			render.PadRight(render.TruncateMarker(r.user.Status, wStatus, m.gl.ellipsis), wStatus) + " "
 		if sel {
@@ -174,9 +174,10 @@ func (m *Model) memberCountLabel(groupID string) string {
 	return strconv.Itoa(len(m.app.Index.GroupMembers[groupID]))
 }
 
-func (m *Model) groupMembersTitle() string {
+// groupMembersSuffix follows the group's name in the header.
+func (m *Model) groupMembersSuffix() string {
 	if m.membersLoading {
-		return fmt.Sprintf("%s · resolving members", m.curGroup.Profile.Name)
+		return " · resolving members"
 	}
-	return fmt.Sprintf("%s · %d member(s)", m.curGroup.Profile.Name, len(m.members))
+	return fmt.Sprintf(" · %d member(s)", len(m.members))
 }

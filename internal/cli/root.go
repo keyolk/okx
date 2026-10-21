@@ -42,7 +42,9 @@ func newRootCmd() *cobra.Command {
 		Long: `okx manages Okta application assignments for users and groups.
 
 Reads its org URL and API token from ~/.okta/okta.yaml (the same file the
-official okta CLI uses), or from $OKTA_ORG_URL and $OKTA_API_TOKEN.
+official okta CLI uses), or from $OKTA_ORG_URL and $OKTA_API_TOKEN. The
+optional okta.client.adminUrl ($OKTA_ADMIN_URL) is the admin console the TUI
+links to; it is derived for *.okta.com, *.oktapreview.com and *.okta-emea.com.
 
 Running okx with no subcommand opens the interactive TUI.`,
 		Version:       Version,
@@ -123,6 +125,7 @@ func newWhoamiCmd() *cobra.Command {
 			if flagJSON {
 				return writeJSON(map[string]any{
 					"org":    c.Cfg.OrgURL,
+					"admin":  c.Cfg.AdminURL,
 					"login":  me.Profile.Login,
 					"id":     me.ID,
 					"apps":   len(c.Index.Apps),
@@ -131,6 +134,12 @@ func newWhoamiCmd() *cobra.Command {
 				})
 			}
 			fmt.Printf("org      %s\n", c.Cfg.OrgURL)
+			admin := c.Cfg.AdminURL
+			if admin == "" {
+				// Say why the TUI has no admin links instead of printing a blank.
+				admin = "unknown (custom domain: set okta.client.adminUrl or $OKTA_ADMIN_URL)"
+			}
+			fmt.Printf("admin    %s\n", admin)
 			fmt.Printf("token as %s (%s)\n", me.Profile.Login, me.ID)
 			fmt.Printf("visible  %d apps, %d users, %d groups\n",
 				len(c.Index.Apps), len(c.Index.Users), len(c.Index.Groups))

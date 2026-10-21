@@ -10,6 +10,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/keyolk/tuikit/tuitest"
+
 	okxapp "github.com/keyolk/okx/internal/app"
 	"github.com/keyolk/okx/internal/cache"
 	"github.com/keyolk/okx/internal/config"
@@ -55,7 +57,7 @@ func clickText(t *testing.T, m *Model, text string) {
 func mouseModel() *Model {
 	snap := cache.Empty("https://example.okta.com")
 	for _, name := range []string{"Alpha", "Bravo", "Charlie", "Delta", "Echo"} {
-		snap.Apps = append(snap.Apps, okta.App{ID: "app-" + strings.ToLower(name), Label: name + " Console"})
+		snap.Apps = append(snap.Apps, okta.App{ID: "app-" + strings.ToLower(name), Name: strings.ToLower(name), Label: name + " Console"})
 	}
 	for _, name := range []string{"ann", "bob", "cyd", "dee"} {
 		u := okta.User{ID: "user-" + name, Status: "ACTIVE"}
@@ -68,8 +70,10 @@ func mouseModel() *Model {
 		g.Profile.Name = name + " Team"
 		snap.Groups = append(snap.Groups, g)
 	}
+	// With an admin URL every name on screen is an OSC 8 link, so the click
+	// and width tests below measure the frame as users get it.
 	m := New(context.Background(), &okxapp.Context{
-		Cfg:   config.Config{OrgURL: snap.OrgURL},
+		Cfg:   config.Config{OrgURL: snap.OrgURL, AdminURL: "https://example-admin.okta.com"},
 		Index: cache.NewIndex(snap),
 	})
 	m.width, m.height = 100, 30
@@ -527,13 +531,20 @@ func TestPaletteRowsAndOutsideClick(t *testing.T) {
 
 // A row wider than the terminal wraps there and shifts every row below it,
 // but a View() string never wraps, so click tests pass regardless (E14).
+// The names are admin links here, one of them to a non-ASCII URL: OSC 8 must
+// add no width (the kit percent-encodes non-ASCII so the counters agree).
 func TestNoScreenIsWiderThanTheTerminal(t *testing.T) {
 	for _, w := range []int{minWidth, 80, 100, 140} {
 		m := mouseModel()
+		m.app.Index.Apps[0].Name = "앱_한글"
+		m.reloadResources()
 		m.width = w
 		for _, k := range []string{"", "2", "3", "1", "enter", "?"} {
 			if k != "" {
 				key(m, k)
+			}
+			if k != "?" && len(tuitest.Links(m.View())) == 0 {
+				t.Fatalf("width %d, after %q: no links, so the width check proves nothing", w, k)
 			}
 			for i, line := range strings.Split(m.View(), "\n") {
 				if got := ansi.StringWidth(line); got > w {

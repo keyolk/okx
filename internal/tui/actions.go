@@ -4,6 +4,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/input"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 	"github.com/keyolk/tuikit/render"
 	"github.com/keyolk/tuikit/toast"
 )
@@ -115,6 +116,8 @@ func (m *Model) run(action string) tea.Cmd {
 		m.moveCursor(-m.listHeight()/2, false)
 	case "list.open":
 		return m.openSelected()
+	case link.Action:
+		return m.openAdminLink()
 
 	case "app.tab":
 		m.showGroups = !m.showGroups

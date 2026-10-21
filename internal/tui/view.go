@@ -80,32 +80,34 @@ func (m *Model) renderTooSmall() string {
 
 func (m *Model) renderHeader() string {
 	left := m.renderTopTabs()
-	var right string
+	// The title names what a drilled-in screen is about: name links to its
+	// admin page (when known), rest is the plain " · N apps" after it.
+	var u, name, rest string
 	switch m.screen {
 	case screenApps, screenGroups, screenUsers:
 		// The counts moved into the tab badges, where all three are visible.
-		right = shortOrg(m.app.Cfg.OrgURL)
+		rest = shortOrg(m.app.Cfg.OrgURL)
 	case screenAssignments:
 		tab := "users"
 		if m.showGroups {
 			tab = "groups"
 		}
-		right = fmt.Sprintf("%s · %s", m.curApp.Label, tab)
+		u, name, rest = m.appURL(m.curApp), m.curApp.Label, " · "+tab
 	case screenGroupApps:
-		right = fmt.Sprintf("%s · %d apps", m.curGroup.Profile.Name, len(m.groupApps))
+		u, name, rest = m.groupURL(m.curGroup), m.curGroup.Profile.Name, fmt.Sprintf(" · %d apps", len(m.groupApps))
 	case screenGroupMembers:
-		right = m.groupMembersTitle()
+		u, name, rest = m.groupURL(m.curGroup), m.curGroup.Profile.Name, m.groupMembersSuffix()
 	case screenUserApps:
-		right = fmt.Sprintf("%s · %d apps", m.revUser.Profile.Login, len(m.revAccess))
+		u, name, rest = m.userURL(m.revUser), m.revUser.Profile.Login, fmt.Sprintf(" · %d apps", len(m.revAccess))
 	case screenHelp:
-		right = "help"
+		rest = "help"
 	}
 
 	rightWidth := m.width - lipgloss.Width(left) - 1
 	if rightWidth < 0 {
 		rightWidth = 0
 	}
-	right = render.TruncateMarker(right, rightWidth, m.gl.ellipsis)
+	right := m.linkTitle(u, name, rest, rightWidth)
 	line := padBetween(left, m.st.dim.Render(right), m.width)
 	sep := m.st.dim.Render(strings.Repeat("─", m.width))
 	if m.gl.check == asciiGlyphs.check {
@@ -188,8 +190,7 @@ func (m *Model) renderApps() string {
 		}
 		groups := len(m.app.Index.AppGroups[a.ID])
 
-		label := render.TruncateMarker(a.Label, wLabel, m.gl.ellipsis)
-		line := render.PadRight(label, wLabel) + " " +
+		line := m.linkCell(m.appURL(a), a.Label, wLabel) + " " +
 			render.PadLeft(strconv.Itoa(users), wUsers) + " " +
 			render.PadLeft(strconv.Itoa(direct), wDirect) + " " +
 			render.PadLeft(strconv.Itoa(groups), wGroups) + " " +
@@ -232,7 +233,7 @@ func (m *Model) renderAssignments() string {
 			marker = m.st.success.Render("D")
 		}
 		via := accessVia(a.Direct, a.ViaGroups)
-		line := render.PadRight(render.TruncateMarker(a.User.Profile.Login, wLogin-2, m.gl.ellipsis), wLogin-2) + " " +
+		line := m.linkCell(m.userURL(a.User), a.User.Profile.Login, wLogin-2) + " " +
 			render.PadRight(render.TruncateMarker(a.Status, wStatus, m.gl.ellipsis), wStatus) + " " +
 			render.TruncateMarker(via, wVia, m.gl.ellipsis)
 
@@ -261,7 +262,7 @@ func (m *Model) renderAppGroups() string {
 
 	m.listLines(&b, len(rows), m.asgCur, m.asgTop, h, func(i int, sel bool) string {
 		g := rows[i]
-		line := render.PadRight(render.TruncateMarker(g.group.Profile.Name, wName, m.gl.ellipsis), wName) + " " +
+		line := m.linkCell(m.groupURL(g.group), g.group.Profile.Name, wName) + " " +
 			render.PadLeft(strconv.Itoa(g.members), wMembers) + "  " +
 			m.st.dim.Render(g.group.ID)
 		if sel {
@@ -291,7 +292,7 @@ func (m *Model) renderUserApps() string {
 		if a.Direct {
 			marker = m.st.success.Render("D")
 		}
-		line := render.PadRight(render.TruncateMarker(a.App.Label, wApp-2, m.gl.ellipsis), wApp-2) + " " +
+		line := m.linkCell(m.appURL(a.App), a.App.Label, wApp-2) + " " +
 			render.PadRight(render.TruncateMarker(a.Status, 14, m.gl.ellipsis), 14) + " " +
 			render.TruncateMarker(accessVia(a.Direct, a.ViaGroups), wVia, m.gl.ellipsis)
 		if sel {
