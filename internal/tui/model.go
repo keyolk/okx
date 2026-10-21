@@ -18,6 +18,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/input"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/prefs"
 	"github.com/keyolk/tuikit/selection"
@@ -499,6 +500,10 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case selection.CopiedMsg:
 		m.copied(msg)
+		return m, nil
+
+	case link.OpenedMsg:
+		m.linkOpened(msg)
 		return m, nil
 	}
 	return m, nil

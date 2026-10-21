@@ -14,7 +14,24 @@ okta:
     token: <SSWS token>
 ```
 
-Or set `OKTA_ORG_URL` and `OKTA_API_TOKEN`. Then:
+Or set `OKTA_ORG_URL` and `OKTA_API_TOKEN`.
+
+In the TUI, user, group and app names link to their admin console pages
+(cmd/ctrl+click, or `o` on the selected row). The admin console URL is derived
+for Okta-hosted orgs (`https://acme.okta.com` → `https://acme-admin.okta.com`,
+likewise `oktapreview.com` and `okta-emea.com`). With a custom domain okx
+cannot know it, so set it, or there are no links:
+
+```yaml
+okta:
+  client:
+    adminUrl: 'https://your-org-admin.okta.com'
+```
+
+`OKTA_ADMIN_URL` overrides it. `okx whoami` prints the URL in use. Behind
+tmux, links need `set -as terminal-features '*:hyperlinks'` (tmux 3.4+).
+
+Then:
 
 ```
 make install   # builds and copies to ~/.local/bin/okx
@@ -74,6 +91,8 @@ resource views. Press `1`, `2`, or `3` from any screen to switch immediately.
   picker; `A` always opens the group picker
 - `d` removes the selected assignment (confirm with `y`)
 - `D` / `G` markers distinguish direct vs group-derived access
+- `o` opens the selected user, group or app in the Okta admin console; the
+  names are also hyperlinks (see Setup for `adminUrl`)
 
 The footer, `?` help and the palette are all generated from one key table, so
 they always match what the keys do. Rebind any action in
