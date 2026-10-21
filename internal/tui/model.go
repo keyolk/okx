@@ -494,8 +494,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textSel.Clear()
 		return m.handleKey(msg)
 
-	case tea.MouseMsg:
-		return m.selectionMouse(msg)
+	case tea.MouseMsg, selection.AutoScrollMsg:
+		return m.selectionUpdate(msg)
 
 	case selection.CopiedMsg:
 		m.copied(msg)

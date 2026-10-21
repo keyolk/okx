@@ -10,13 +10,20 @@ import (
 	"github.com/keyolk/tuikit/input"
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/render"
+	"github.com/keyolk/tuikit/selection"
 	"github.com/keyolk/tuikit/toast"
 
 	"github.com/keyolk/okx/internal/okta"
 )
 
-// View implements tea.Model.
+// View implements tea.Model: the frame with the drag selection on top.
 func (m *Model) View() string {
+	return m.textSel.Render(m.frame(), m.selPanes(), selection.DefaultStyle())
+}
+
+// frame is View without the selection highlight: the selection reads it to
+// copy panes that have no Lines, and the highlight must not be copied along.
+func (m *Model) frame() string {
 	if m.width == 0 {
 		return ""
 	}
@@ -36,7 +43,7 @@ func (m *Model) View() string {
 	if m.overlay != overlayNone {
 		frame = m.renderOverlay(frame)
 	}
-	return m.textSel.Render(frame, m.selPanes(), m.st.selection)
+	return frame
 }
 
 func (m *Model) renderScreen() string {

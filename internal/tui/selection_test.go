@@ -2,25 +2,20 @@ package tui
 
 import (
 	"errors"
-	"io"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
+	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/selection"
+	"github.com/keyolk/tuikit/tuitest"
 )
 
-// selModel is mouseModel with a selection style that emits SGR, so the
-// reverse-video highlight is visible in View() and can be located.
-func selModel() *Model {
-	m := mouseModel()
-	r := lipgloss.NewRenderer(io.Discard)
-	r.SetColorProfile(termenv.ANSI)
-	m.st.selection = r.NewStyle().Reverse(true)
-	return m
-}
+// selModel is mouseModel. selection.DefaultStyle draws reverse video on a
+// renderer that keeps it whatever profile the test process detects, so the
+// highlight shows in View() without a test-only style.
+func selModel() *Model { return mouseModel() }
 
 func mouseAt(m *Model, x, y int, b tea.MouseButton, a tea.MouseAction) tea.Cmd {
 	_, cmd := m.Update(tea.MouseMsg{X: x, Y: y, Button: b, Action: a})
@@ -35,34 +30,28 @@ func drag(m *Model, x0, y0, x1, y1 int) tea.Cmd {
 	return mouseAt(m, x1, y1, tea.MouseButtonNone, tea.MouseActionRelease)
 }
 
-func copiedText(m *Model) string { return m.textSel.Text(m.selPanes(), m.View()) }
+func copiedText(m *Model) string { return m.textSel.Text(m.selPanes(), m.frame()) }
 
-// span is one run of reverse-video cells in a rendered frame.
+// span is one run of reverse-video cells in a rendered frame, located by
+// finding the run's text on its stripped line.
 type span struct {
 	y, x0, x1 int
 	text      string
 }
 
 func highlighted(view string) []span {
-	const on, off = "\x1b[7m", "\x1b[0m"
 	var out []span
 	for y, line := range strings.Split(view, "\n") {
-		rest, base := line, 0
-		for {
-			i := strings.Index(rest, on)
+		plain := ansi.Strip(line)
+		from := 0
+		for _, run := range tuitest.Reversed(line) {
+			i := strings.Index(plain[from:], run)
 			if i < 0 {
-				break
+				continue
 			}
-			x0 := base + ansi.StringWidth(ansi.Strip(rest[:i]))
-			body := rest[i+len(on):]
-			j := strings.Index(body, off)
-			if j < 0 {
-				j = len(body)
-			}
-			text := ansi.Strip(body[:j])
-			out = append(out, span{y, x0, x0 + ansi.StringWidth(text), text})
-			base = x0 + ansi.StringWidth(text)
-			rest = body[j:]
+			x0 := ansi.StringWidth(plain[:from+i])
+			out = append(out, span{y, x0, x0 + ansi.StringWidth(run), run})
+			from += i + len(run)
 		}
 	}
 	return out
@@ -216,5 +205,98 @@ func TestListUnderAModalIsNotSelectable(t *testing.T) {
 	drag(m, x, y, x+8, y+1)
 	if m.textSel.Active() || len(highlighted(m.View())) != 0 {
 		t.Fatal("the list under a modal must not be selectable")
+	}
+}
+
+// A resize can leave helpOff past the end of the page (RenderHelp clamps it
+// when drawing). A drag past the top must still scroll up one line from what
+// is on screen: the app sets the offset the selection reports, it does not
+// add the scroll to its own stale value.
+func TestDragPastTheHelpTopScrollsFromAStaleOffset(t *testing.T) {
+	m := selModel()
+	m.height = 16 // the help is longer than the page
+	key(m, "?")
+	m.helpOff = 1 << 10 // past the end, as a taller terminal leaves it
+	_, drawn := keysRenderedOffset(m)
+	if drawn == 0 {
+		t.Fatal("setup: help must be longer than the page")
+	}
+	first := strings.Split(ansi.Strip(m.View()), "\n")[headerLines]
+	x, y := at(t, m, strings.TrimSpace(first))
+	mouseAt(m, x, y, tea.MouseButtonLeft, tea.MouseActionPress)
+	mouseAt(m, x, 0, tea.MouseButtonLeft, tea.MouseActionMotion) // onto the tabs, above the page
+	if m.helpOff != drawn-1 {
+		t.Fatalf("helpOff=%d after a drag past the top, want %d (one above the drawn page)", m.helpOff, drawn-1)
+	}
+	if _, now := keysRenderedOffset(m); now != drawn-1 {
+		t.Fatalf("the page did not move: drawn offset %d, want %d", now, drawn-1)
+	}
+}
+
+// keysRenderedOffset is the page and offset renderHelp draws with
+// (RenderHelp clamps helpOff).
+func keysRenderedOffset(m *Model) ([]string, int) {
+	return keys.RenderHelp(m.helpSections(), m.width, m.helpRows(), m.helpOff, keys.HelpStyle{})
+}
+
+// A drag resting on the "… more" marker keeps scrolling through the
+// selection's auto-scroll ticks; the terminal sends no motion meanwhile.
+func TestDragRestingPastTheHelpBottomAutoScrolls(t *testing.T) {
+	m := selModel()
+	m.height = 16
+	key(m, "?")
+	x, y := at(t, m, "navigation")
+	_, marker := at(t, m, "more")
+	mouseAt(m, x, y, tea.MouseButtonLeft, tea.MouseActionPress)
+	cmd := mouseAt(m, x+60, marker, tea.MouseButtonLeft, tea.MouseActionMotion)
+	if m.helpOff != 1 {
+		t.Fatalf("helpOff=%d after one drag onto the marker, want 1", m.helpOff)
+	}
+	for want := 2; want <= 3; want++ {
+		var tick tea.Msg
+		for _, msg := range tuitest.Drain(cmd, 2*selection.AutoScrollInterval) {
+			if _, ok := msg.(selection.AutoScrollMsg); ok {
+				tick = msg
+			}
+		}
+		if tick == nil {
+			t.Fatalf("no auto-scroll tick while the drag rests past the edge (want offset %d)", want)
+		}
+		_, cmd = m.Update(tick)
+		if m.helpOff != want {
+			t.Fatalf("helpOff=%d after an auto-scroll tick, want %d", m.helpOff, want)
+		}
+	}
+}
+
+// NO_COLOR asks for no color; reverse video is not a color, and without it a
+// selection would be invisible.
+func TestSelectionStaysVisibleUnderNoColor(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := selModel()
+	x, y := at(t, m, "Bravo Console")
+	drag(m, x, y, x+4, y)
+	if got := tuitest.Reversed(m.View()); len(got) != 1 || got[0] != "Bravo" {
+		t.Fatalf("reverse runs under NO_COLOR = %q, want [Bravo]", got)
+	}
+}
+
+// The copy reaches the clipboard through selection.Clipboard and comes back
+// as the toast text the kit words.
+func TestReleaseCopiesThroughTheClipboardSeam(t *testing.T) {
+	var got []string
+	old := selection.Clipboard
+	selection.Clipboard = func(s string) error { got = append(got, s); return nil }
+	t.Cleanup(func() { selection.Clipboard = old })
+	m := selModel()
+	x, y := at(t, m, "Bravo Console")
+	for _, msg := range tuitest.Drain(drag(m, x, y, x+4, y), 0) {
+		m.Update(msg)
+	}
+	if len(got) != 1 || got[0] != "Bravo" {
+		t.Fatalf("clipboard got %q, want [Bravo]", got)
+	}
+	if footer := ansi.Strip(m.renderFooter()); !strings.Contains(footer, "copied 5 chars") {
+		t.Fatalf("footer %q, want the copy note", footer)
 	}
 }

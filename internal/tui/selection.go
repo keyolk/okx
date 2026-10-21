@@ -1,9 +1,6 @@
 package tui
 
 import (
-	"fmt"
-	"unicode/utf8"
-
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/mouse"
@@ -28,33 +25,33 @@ import (
 //
 // Selection never applies anything: the copy is the only side effect.
 
-// selectionMouse feeds msg to the selection before the click handler. A press
-// that does not move is left to handleMouse, so click-to-select still works;
-// only what the selection consumed (a drag, its release, a word pick) skips it.
-func (m *Model) selectionMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	r := m.textSel.Mouse(msg, m.selPanes(), m.View(), m.clock())
-	var cmds []tea.Cmd
+// selectionUpdate feeds a mouse event or an auto-scroll tick to the selection
+// before the click handler. A press that does not move is left to
+// handleMouse, so click-to-select still works; only what the selection
+// consumed (a drag, its release, a word pick) skips it.
+func (m *Model) selectionUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
+	r, cmd := m.textSel.Update(msg, m.selPanes, m.frame, m.clock())
 	if r.Scroll != 0 && r.ScrollPane == helpPaneID {
-		cmds = append(cmds, m.repeat(r.Scroll, "help.down", "help.up"))
+		// Set, not add: the pane was built from the offset View drew with,
+		// and a helpOff a resize left past the end would swallow a scroll up.
+		m.helpOff = r.Offset
 	}
-	if r.Copy != "" {
-		cmds = append(cmds, selection.Copy(r.Copy))
+	mm, ok := msg.(tea.MouseMsg)
+	if r.Consumed || !ok {
+		return m, cmd
 	}
-	if r.Consumed {
-		return m, tea.Batch(cmds...)
-	}
-	_, cmd := m.handleMouse(msg)
-	return m, tea.Batch(append(cmds, cmd)...)
+	_, c := m.handleMouse(mm)
+	return m, tea.Batch(cmd, c)
 }
 
 // copied reports the clipboard write: a copy is silent otherwise, and a
 // failed one (no pbcopy, no /dev/tty) must not look like a success.
 func (m *Model) copied(msg selection.CopiedMsg) {
+	level := toast.Info
 	if msg.Err != nil {
-		m.notify("copy", "copy failed: "+msg.Err.Error(), toast.Error)
-		return
+		level = toast.Error
 	}
-	m.notify("copy", fmt.Sprintf("copied %d chars", utf8.RuneCountInString(msg.Text)), toast.Info)
+	m.notify("copy", msg.Note(), level)
 }
 
 const helpPaneID = "help"
@@ -80,15 +77,18 @@ func (m *Model) selPanes() []selection.Pane {
 func (m *Model) helpPane() selection.Pane {
 	sections := m.helpSections()
 	rows := m.helpRows()
-	all, _ := keys.RenderHelp(sections, m.width, keys.HelpLineCount(sections, m.width), 0, m.helpStyle())
+	all := keys.HelpLines(sections, m.width, m.helpStyle())
+	// The offset renderHelp draws with: RenderHelp clamps helpOff, which a
+	// resize can leave past the end.
+	_, off := keys.RenderHelp(sections, m.width, rows, m.helpOff, keys.HelpStyle{})
 	rect := mouse.Rect{X: 0, Y: headerLines, W: m.width, H: rows}
-	if len(all)-m.helpOff > rows {
+	if len(all)-off > rows {
 		// RenderHelp spends the last row on "… N more" while lines remain
 		// below. That row is not a help line, so it is left out: a drag onto
 		// it scrolls instead of selecting the hidden line under the marker.
 		rect.H--
 	}
-	return selection.Pane{ID: helpPaneID, Rect: rect, Kind: selection.Text, Lines: all, Offset: m.helpOff}
+	return selection.Pane{ID: helpPaneID, Rect: rect, Kind: selection.Text, Lines: all, Offset: off}
 }
 
 // overlayPanes is the open modal's content inside its border and padding,
@@ -98,13 +98,7 @@ func (m *Model) overlayPanes() []selection.Pane {
 	if box.W == 0 {
 		return nil
 	}
-	st := m.st.modal // modalWarn has the same frame
-	left := st.GetBorderLeftSize() + st.GetPaddingLeft()
-	top := st.GetBorderTopSize() + st.GetPaddingTop()
-	content := mouse.Rect{
-		X: box.X + left, Y: box.Y + top,
-		W: max(0, box.W-st.GetHorizontalFrameSize()), H: max(0, box.H-st.GetVerticalFrameSize()),
-	}
+	content := box.InsetStyle(m.st.modal) // modalWarn has the same frame
 	panes := []selection.Pane{{ID: "modal", Rect: content, Kind: selection.Text}}
 	if rows, _, _, _, _ := m.overlayRows(box); rows.H > 0 {
 		// overlayRows spans the padding cells too (it hit-tests whole rows);
